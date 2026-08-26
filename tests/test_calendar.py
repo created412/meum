@@ -21,7 +21,7 @@ from brity_todo import calendar_sync              # noqa: E402
 def make_task(task_id, title, due_at, kind="deadline"):
     return {
         "task_id": task_id, "title": title, "due_at": due_at, "due_kind": kind,
-        "requester": "조동희(한백고등학교)", "category": "제출",
+        "requester": "김하늘(○○고등학교)", "category": "제출",
         "detail": "점검사항 확인 후 회신", "warn": "",
     }
 
