@@ -165,8 +165,7 @@ class Wizard:
                     self.root.after(0, lambda: (result.configure(text=msg, fg="#166534"),
                                                 nxt.configure(state="normal")))
                     if name:
-                        self.cfg["my_name"] = name
-                        config.save(self.cfg)
+                        self.cfg = config.update(my_name=name)
                 except Exception as e:
                     m = f"연결하지 못했습니다.\n\n{e}"
                     self.root.after(0, lambda: result.configure(text=m, fg=DANGER))
@@ -235,10 +234,8 @@ class Wizard:
                                           "HH:MM 형식으로 넣어 주세요 (예: 08:40)",
                                      fg=DANGER)
                     return
-            self.cfg["run_time"] = t1
-            self.cfg["run_time_lunch"] = t2
-            self.cfg["times_confirmed"] = True
-            config.save(self.cfg)
+            self.cfg = config.update(run_time=t1, run_time_lunch=t2,
+                                     times_confirmed=True)
             status.configure(text="등록 중…", fg=MUTED)
             self.root.update()
             ok, msg = register_task(t1, t2)

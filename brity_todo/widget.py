@@ -265,9 +265,11 @@ class Widget:
         self.root.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
 
     def _set_view(self, key: str):
+        # 패널은 자기가 바꾼 항목만 저장한다.
+        # 통째로 저장하면(save) 켜질 때 읽어둔 낡은 사본이 그 사이 마법사에서
+        # 바꾼 점검 시각 등을 되돌려 버린다.
         self.view = key
-        self.cfg["widget_view"] = key
-        config.save(self.cfg)
+        self.cfg = config.update(widget_view=key)
         self.refresh()
 
     # ---- 창 끌기 ----
@@ -282,14 +284,12 @@ class Widget:
 
     def _drag_end(self, e):
         self._drag = None
-        self.cfg["widget_x"] = self.root.winfo_x()
-        self.cfg["widget_y"] = self.root.winfo_y()
-        config.save(self.cfg)
+        self.cfg = config.update(widget_x=self.root.winfo_x(),
+                                 widget_y=self.root.winfo_y())
 
     def _toggle_pin(self):
         v = not bool(self.cfg.get("widget_always_on_top", False))
-        self.cfg["widget_always_on_top"] = v
-        config.save(self.cfg)
+        self.cfg = config.update(widget_always_on_top=v)
         self.root.attributes("-topmost", v)
         self.status.configure(text="항상 위 켬" if v else "항상 위 끔")
 

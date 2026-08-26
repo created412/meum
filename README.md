@@ -1,4 +1,7 @@
-# BrityTodo
+# 메움 · Meum
+
+### 메신저 움켜쥐기
+**메신저에서 놓친 선생님들의 업무를 메워드립니다.**
 
 브리티 메신저와 GOE메신저 쪽지를 읽어 **할 일과 마감일을 뽑아내고, 확인을 거쳐
 바탕화면 패널과 달력에 정리해 주는** 프로그램입니다.
@@ -13,7 +16,7 @@
 
 ## 0. 내려받기
 
-- **실행 파일** — [Releases](../../releases) 에서 `BrityTodo-v1.0-win64.zip` 을 받아 압축을 풀고 `BrityTodo.exe` 실행
+- **실행 파일** — [Releases](../../releases) 에서 `Meum-v1.0-win64.zip` 을 받아 압축을 풀고 `Meum.exe` 실행
 - **소스** — 아래 「소스로 실행하는 경우」 참고
 
 Python 설치가 필요 없고, USB에 넣어 다녀도 동작합니다.
@@ -24,7 +27,7 @@ Python 설치가 필요 없고, USB에 넣어 다녀도 동작합니다.
 
 ### 다른 컴퓨터에서 쓰는 경우 (권장)
 
-`dist/BrityTodo` 폴더를 통째로 복사해 옮기고 **`BrityTodo.exe`를 두 번 클릭**하면 됩니다.
+`dist/Meum` 폴더를 통째로 복사해 옮기고 **`Meum.exe`를 두 번 클릭**하면 됩니다.
 Python 설치가 필요 없습니다. USB에 넣어 다녀도 동작합니다.
 
 처음 실행하면 **설치 마법사**가 세 단계를 안내합니다.
@@ -44,7 +47,7 @@ python run.py
 
 (구글 캘린더 동기화까지 쓰려면 `google-api-python-client google-auth-oauthlib` 추가)
 
-exe를 직접 만들려면 `python build.py` — 결과는 `dist/BrityTodo/`.
+exe를 직접 만들려면 `python build.py` — 결과는 `dist/Meum/`.
 
 ## 2. 매일 동작
 
@@ -62,7 +65,7 @@ exe를 직접 만들려면 `python build.py` — 결과는 `dist/BrityTodo/`.
 
 ## 3. 바탕화면 패널
 
-화면 오른쪽에 붙는 세로 판. `BrityTodo.exe --widget`.
+화면 오른쪽에 붙는 세로 판. `Meum.exe --widget`.
 
 - **위: 작은 달력** — 오늘 강조, 일정 있는 날에 점(빨강=지남/오늘, 초록=내 일,
   보라=알아둘 일, 주황=학사일정). 날짜를 누르면 그 날만. 연·월 클릭 → 큰 달력.
@@ -97,17 +100,17 @@ exe를 직접 만들려면 `python build.py` — 결과는 `dist/BrityTodo/`.
 ## 6. 명령어
 
 ```bash
-BrityTodo.exe                 # 지금 정리 실행
-BrityTodo.exe --setup         # 설치 마법사 (실행 시각 변경)
-BrityTodo.exe --widget        # 바탕화면 패널
-BrityTodo.exe --calendar      # 큰 달력
-BrityTodo.exe --list-only     # 목록만 읽기 (아무것도 바꾸지 않음)
-BrityTodo.exe --status        # 실행 이력
-BrityTodo.exe --headless      # 확인 창 없이 (확신도 높은 것만 자동 반영)
-BrityTodo.exe --uninstall     # 자동 실행 등록 해제
+Meum.exe                 # 지금 정리 실행
+Meum.exe --setup         # 설치 마법사 (실행 시각 변경)
+Meum.exe --widget        # 바탕화면 패널
+Meum.exe --calendar      # 큰 달력
+Meum.exe --list-only     # 목록만 읽기 (아무것도 바꾸지 않음)
+Meum.exe --status        # 실행 이력
+Meum.exe --headless      # 확인 창 없이 (확신도 높은 것만 자동 반영)
+Meum.exe --uninstall     # 자동 실행 등록 해제
 ```
 
-## 7. 설정 — `%LOCALAPPDATA%\BrityTodo\config.json`
+## 7. 설정 — `%LOCALAPPDATA%\Meum\config.json`
 
 | 항목 | 기본값 | 설명 |
 |---|---|---|
@@ -134,9 +137,9 @@ python tests/test_titles.py       # 제목 압축 · 내 일/알아둘 일 구�
 
 | 무엇 | 어디 |
 |---|---|
-| 설정 | `%LOCALAPPDATA%\BrityTodo\config.json` |
-| 기록(쪽지·할 일·학사일정) | `%LOCALAPPDATA%\BrityTodo\state.db` |
-| 실행 로그 | `%LOCALAPPDATA%\BrityTodo\logs\` |
+| 설정 | `%LOCALAPPDATA%\Meum\config.json` |
+| 기록(쪽지·할 일·학사일정) | `%LOCALAPPDATA%\Meum\state.db` |
+| 실행 로그 | `%LOCALAPPDATA%\Meum\logs\` |
 
 기록은 컴퓨터마다 따로 보관됩니다. 배포 폴더를 옮겨도 기록은 따라가지 않으며,
 새 컴퓨터에서는 최근 14일을 소급해 한 번 정리합니다.
@@ -148,10 +151,10 @@ python tests/test_titles.py       # 제목 압축 · 내 일/알아둘 일 구�
 이 프로그램은 **교사가 이미 자기 메신저에서 볼 수 있는 쪽지를, 그 교사의 컴퓨터 안에서 다시 정리해 주는** 도구입니다. 정보를 새로 모으거나 밖으로 보내지 않습니다.
 
 - **서버가 없습니다.** 회원가입·로그인·계정 생성 절차가 없고, 기본 설정에서 네트워크 통신을 하지 않습니다.
-- **저장 위치는 이 컴퓨터뿐입니다.** `%LOCALAPPDATA%\BrityTodo\` 아래에만 기록되며, Windows 계정별 보호 영역이라 본인만 접근할 수 있습니다.
+- **저장 위치는 이 컴퓨터뿐입니다.** `%LOCALAPPDATA%\Meum\` 아래에만 기록되며, Windows 계정별 보호 영역이라 본인만 접근할 수 있습니다.
 - **메신저를 바꾸지 않습니다.** 답장·전달·삭제 기능이 아예 구현되어 있지 않습니다. 쪽지를 열고 닫는 동작만 합니다.
 - **전화번호는 가려집니다.** (`mask_phone_numbers`, 기본 켜짐)
-- **지우면 끝입니다.** `%LOCALAPPDATA%\BrityTodo\` 폴더를 삭제하면 모든 기록이 즉시 사라집니다. `BrityTodo.exe --uninstall` 로 자동 실행 등록만 해제할 수도 있습니다.
+- **지우면 끝입니다.** `%LOCALAPPDATA%\Meum\` 폴더를 삭제하면 모든 기록이 즉시 사라집니다. `Meum.exe --uninstall` 로 자동 실행 등록만 해제할 수도 있습니다.
 
 외부 통신이 발생하는 두 기능은 **모두 기본 꺼짐**이며, 이용자가 설정 파일을 직접 고쳐야만 켜집니다.
 

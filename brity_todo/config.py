@@ -118,7 +118,33 @@ def load() -> dict:
 
 
 def save(cfg: dict) -> None:
+    """설정 전체를 덮어쓴다. 방금 파일을 읽은 쪽(설치 마법사)만 써야 한다."""
     ensure_dirs()
     CONFIG_PATH.write_text(
         json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
     )
+
+
+def update(**changes) -> dict:
+    """
+    바꾸려는 항목만 골라 저장한다. 갱신된 설정을 돌려준다.
+
+    오래 떠 있는 프로그램(바탕화면 패널)은 켜질 때 읽은 설정 사본을 들고 있다.
+    그 사본을 save() 로 통째로 쓰면, 그 사이 다른 곳(설치 마법사)에서 바꾼 값이
+    조용히 되돌아간다. 실제로 마법사에서 정한 점검 시각이 패널의 탭 클릭 한 번에
+    옛 값으로 돌아간 적이 있다. 그래서 파일을 다시 읽어 해당 항목만 고쳐 쓴다.
+    """
+    ensure_dirs()
+    current = {}
+    if CONFIG_PATH.exists():
+        try:
+            current = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            current = {}
+    current.update(changes)
+    CONFIG_PATH.write_text(
+        json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    merged = dict(DEFAULTS)
+    merged.update(current)
+    return merged
