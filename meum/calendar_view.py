@@ -25,7 +25,7 @@ from tkinter import filedialog, messagebox, simpledialog
 from tkinter import font as tkfont
 from typing import Dict, List, Optional
 
-from . import config
+from . import APP_NAME, WINDOW_CALENDAR, config
 from .state import State
 
 BG = "#ffffff"
@@ -73,7 +73,7 @@ class CalendarWindow:
         self.selected: date = today
 
         self.root = tk.Toplevel(master) if master else tk.Tk()
-        self.root.title("BrityTodo 달력")
+        self.root.title(WINDOW_CALENDAR)
         self.root.configure(bg=BG)
         self.f = {
             "title": tkfont.Font(family="맑은 고딕", size=13, weight="bold"),
@@ -333,7 +333,7 @@ class CalendarWindow:
             s = date.fromisoformat(parts[0])
             e = date.fromisoformat(parts[1]) if len(parts) > 1 else s
         except ValueError:
-            messagebox.showwarning("BrityTodo", "날짜를 YYYY-MM-DD 형식으로 넣어 주세요.",
+            messagebox.showwarning(APP_NAME, "날짜를 YYYY-MM-DD 형식으로 넣어 주세요.",
                                    parent=self.root)
             return
         st = State()
@@ -344,7 +344,7 @@ class CalendarWindow:
         self.refresh()
 
     def _del_event(self, event_id: int):
-        if not messagebox.askyesno("BrityTodo", "이 학사일정을 지울까요?",
+        if not messagebox.askyesno(APP_NAME, "이 학사일정을 지울까요?",
                                    parent=self.root):
             return
         st = State()
@@ -362,11 +362,11 @@ class CalendarWindow:
         try:
             n, dup = import_ics(Path(path))
         except Exception as e:
-            messagebox.showerror("BrityTodo", f"가져오지 못했습니다.\n\n{e}",
+            messagebox.showerror(APP_NAME, f"가져오지 못했습니다.\n\n{e}",
                                  parent=self.root)
             return
         messagebox.showinfo(
-            "BrityTodo",
+            APP_NAME,
             f"학사일정 {n}건을 가져왔습니다." +
             (f"\n(이미 있던 {dup}건은 건너뛰었습니다)" if dup else ""),
             parent=self.root)

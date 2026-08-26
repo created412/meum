@@ -59,7 +59,7 @@ def _description(task) -> str:
         lines.append("")
         lines.append(f"[확인 필요] {task['warn']}")
     lines.append("")
-    lines.append(f"(BrityTodo 자동 등록 · task#{task['task_id']})")
+    lines.append(f"(메움 자동 등록 · task#{task['task_id']})")
     return "\n".join(lines)
 
 
@@ -122,7 +122,7 @@ def _wrap_calendar(events: List[str]) -> str:
     return "\r\n".join([
         "BEGIN:VCALENDAR",
         "VERSION:2.0",
-        "PRODID:-//BrityTodo//KR",
+        "PRODID:-//Meaum//KR",
         "CALSCALE:GREGORIAN",
         "METHOD:PUBLISH",
         f"X-WR-CALNAME:{CALENDAR_NAME}",

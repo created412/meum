@@ -1,14 +1,15 @@
 # -*- coding: utf-8 -*-
 """
-BrityTodo 진입점.
+메움 — 메신저에서 놓친 선생님들의 업무를 메워드립니다.
 
-    BrityTodo.exe                 처음이면 설치 마법사, 이후엔 바로 정리
-    BrityTodo.exe --setup         설치 마법사 다시 열기
-    BrityTodo.exe --trigger daily  작업 스케줄러가 호출하는 형태
-    BrityTodo.exe --list-only      목록만 읽기 (아무것도 바꾸지 않음)
-    BrityTodo.exe --status         실행 이력 확인
-    BrityTodo.exe --headless       확인 창 없이 자동 승인분만 저장
-    BrityTodo.exe --uninstall      자동 실행 등록만 해제
+    메움.exe                 처음이면 설치 마법사, 이후엔 바로 정리
+    메움.exe --setup         설치 마법사 다시 열기
+    메움.exe --widget        바탕화면 할 일 패널
+    메움.exe --calendar      달력
+    메움.exe --trigger daily 작업 스케줄러가 호출하는 형태
+    메움.exe --list-only     목록만 읽기 (아무것도 바꾸지 않음)
+    메움.exe --status        실행 이력 확인
+    메움.exe --uninstall     자동 실행 등록만 해제
 """
 from __future__ import annotations
 
@@ -19,9 +20,9 @@ from pathlib import Path
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from brity_todo import config                      # noqa: E402
-from brity_todo.app import Runner, setup_logging   # noqa: E402
-from brity_todo.state import State                 # noqa: E402
+from meum import config                      # noqa: E402
+from meum.app import Runner, setup_logging   # noqa: E402
+from meum.state import State                 # noqa: E402
 
 
 def out(*a):
@@ -35,7 +36,7 @@ def out(*a):
 
 
 def cmd_list_only() -> int:
-    from brity_todo.collector import BrityCollector
+    from meum.collector import BrityCollector
     cfg = config.load()
     log = setup_logging()
     c = BrityCollector(cfg, log=log.info)
@@ -56,7 +57,7 @@ def cmd_list_only() -> int:
 
 
 def cmd_status() -> int:
-    from brity_todo.calendar_sync import GoogleBackend
+    from meum.calendar_sync import GoogleBackend
     cfg = config.load()
     st = State()
     lr = st.last_run_at
@@ -80,8 +81,8 @@ def cmd_status() -> int:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(prog="BrityTodo",
-                                description="브리티 쪽지 → 할 일 · 캘린더 정리")
+    p = argparse.ArgumentParser(prog="메움",
+                                description="메움 — 메신저에서 놓친 선생님들의 업무를 메워드립니다")
     p.add_argument("--trigger", default="manual",
                    choices=["manual", "daily", "logon", "extra"])
     p.add_argument("--setup", action="store_true", help="설치 마법사 열기")
@@ -95,11 +96,11 @@ def main() -> int:
     args = p.parse_args()
 
     if args.calendar:
-        from brity_todo.calendar_view import show
+        from meum.calendar_view import show
         show()
         return 0
     if args.widget:
-        from brity_todo.widget import show
+        from meum.widget import show
         show()
         return 0
     if args.status:
@@ -107,7 +108,7 @@ def main() -> int:
     if args.list_only:
         return cmd_list_only()
 
-    from brity_todo import wizard
+    from meum import wizard
 
     if args.uninstall:
         wizard.unregister_task()

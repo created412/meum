@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from brity_todo import config                    # noqa: E402
-from brity_todo.extractor import RuleExtractor   # noqa: E402
+from meum import config                    # noqa: E402
+from meum.extractor import RuleExtractor   # noqa: E402
 
 cfg = dict(config.DEFAULTS)
 ex = RuleExtractor(cfg)

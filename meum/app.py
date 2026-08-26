@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, Optional
 
-from . import calendar_sync, config, extractor as extractor_mod, ui
+from . import WINDOW_PANEL, calendar_sync, config, extractor as extractor_mod, ui
 from .collector import (BrityCollector, CollectorError, ListedNote,
                         NotSignedInError)
 from .state import State
@@ -27,7 +27,7 @@ from .state import State
 def setup_logging() -> logging.Logger:
     config.ensure_dirs()
     log_file = Path(config.LOG_DIR) / f"{datetime.now():%Y%m}.log"
-    logger = logging.getLogger("brity_todo")
+    logger = logging.getLogger("meaum")
     if logger.handlers:
         return logger
     logger.setLevel(logging.INFO)
@@ -198,7 +198,7 @@ class Runner:
             win32gui.EnumWindows(
                 lambda h, _: (found.append(h)
                               if win32gui.IsWindowVisible(h)
-                              and win32gui.GetWindowText(h) == "BrityTodo 할 일"
+                              and win32gui.GetWindowText(h) == WINDOW_PANEL
                               else None, True)[-1], None)
             if found:
                 return                      # 이미 떠 있다

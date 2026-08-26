@@ -6,7 +6,10 @@ import json
 import os
 from pathlib import Path
 
-APP_DIR = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "BrityTodo"
+_LOCAL = Path(os.environ.get("LOCALAPPDATA", str(Path.home())))
+APP_DIR = _LOCAL / "메움"
+LEGACY_DIR = _LOCAL / "BrityTodo"      # 이름을 바꾸기 전에 쓰던 폴더
+
 CONFIG_PATH = APP_DIR / "config.json"
 STATE_PATH = APP_DIR / "state.db"
 LOG_DIR = APP_DIR / "logs"
@@ -99,7 +102,39 @@ DEFAULTS = {
 }
 
 
+def migrate_legacy() -> bool:
+    """
+    'BrityTodo' 시절에 쌓아둔 기록을 '메움' 폴더로 옮긴다.
+
+    이름을 바꿨다고 그동안 모은 할 일·학사일정이 사라지면 안 된다.
+    새 폴더가 아직 없을 때만 통째로 옮기고, 실패하면 파일 단위로 복사한다.
+    """
+    if APP_DIR.exists() or not LEGACY_DIR.exists():
+        return False
+    try:
+        LEGACY_DIR.rename(APP_DIR)
+        return True
+    except Exception:
+        pass
+    # 폴더째 옮기지 못하면(다른 프로그램이 잡고 있는 등) 하나씩 복사한다
+    try:
+        import shutil
+        APP_DIR.mkdir(parents=True, exist_ok=True)
+        for item in LEGACY_DIR.iterdir():
+            target = APP_DIR / item.name
+            if target.exists():
+                continue
+            if item.is_dir():
+                shutil.copytree(item, target)
+            else:
+                shutil.copy2(item, target)
+        return True
+    except Exception:
+        return False
+
+
 def ensure_dirs() -> None:
+    migrate_legacy()
     for d in (APP_DIR, LOG_DIR, ICS_DIR):
         d.mkdir(parents=True, exist_ok=True)
 

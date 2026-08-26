@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-단일 실행 파일(BrityTodo.exe) 만들기.
+단일 실행 파일(메움.exe) 만들기.
 
     python build.py
 
-결과: dist/BrityTodo/ 폴더 하나.
+결과: dist/메움/ 폴더 하나.
       이 폴더를 통째로 USB나 다른 PC에 옮기면 Python 없이 바로 실행된다.
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
 BUILD = ROOT / "build"
-NAME = "BrityTodo"
+NAME = "메움"
 
 HIDDEN = [
     "uiautomation", "comtypes", "comtypes.stream",

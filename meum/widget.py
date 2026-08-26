@@ -24,10 +24,10 @@ from typing import Dict, List, Optional, Tuple
 
 import calendar as pycal
 
-from . import config
+from . import APP_NAME, APP_TAGLINE_SHORT, WINDOW_PANEL, config
 from .state import State
 
-WINDOW_TITLE = "BrityTodo 할 일"
+WINDOW_TITLE = WINDOW_PANEL
 
 # ---- 색 (디자인 체계) ----
 PAGE_BG = "#eef1f6"      # 패널 바탕 (옅은 회색)
@@ -126,6 +126,7 @@ class Widget:
         self.root.attributes("-topmost", bool(self.cfg.get("widget_always_on_top", False)))
 
         self.f = {
+            "brand": tkfont.Font(family="맑은 고딕", size=9, weight="bold"),
             "head": tkfont.Font(family="맑은 고딕", size=12, weight="bold"),
             "headsub": tkfont.Font(family="맑은 고딕", size=8),
             "pill": tkfont.Font(family="맑은 고딕", size=8, weight="bold"),
@@ -158,36 +159,44 @@ class Widget:
     # ------------------------------------------------------------------
     def _build(self):
         # ── 머리말: 짙은 남색 띠, 제목 + 개수 배지 ──
-        head = tk.Frame(self.root, bg=HEAD_BG, height=56)
+        head = tk.Frame(self.root, bg=HEAD_BG, height=66)
         head.pack(fill="x")
         head.pack_propagate(False)
 
-        left = tk.Frame(head, bg=HEAD_BG)
-        left.pack(side="left", fill="y", padx=(14, 0))
-        self.title_lbl = tk.Label(left, text="할 일", font=self.f["head"],
-                                  bg=HEAD_BG, fg=HEAD_FG, anchor="w")
-        self.title_lbl.pack(anchor="w", pady=(9, 0))
-        self.date_lbl = tk.Label(left, text="", font=self.f["headsub"],
-                                 bg=HEAD_BG, fg=HEAD_SUB, anchor="w")
-        self.date_lbl.pack(anchor="w")
+        # 윗줄: 이름 + 오늘 날짜 (왼쪽) · 창 단추 (오른쪽)
+        row1 = tk.Frame(head, bg=HEAD_BG)
+        row1.pack(fill="x", padx=(14, 10), pady=(8, 0))
+        self.brand_lbl = tk.Label(row1, text=APP_NAME, font=self.f["brand"],
+                                  bg=HEAD_BG, fg="#7dd3fc")
+        self.brand_lbl.pack(side="left")
+        self.date_lbl = tk.Label(row1, text="", font=self.f["headsub"],
+                                 bg=HEAD_BG, fg=HEAD_SUB)
+        self.date_lbl.pack(side="left", padx=(8, 0))
 
-        self.pills = tk.Frame(head, bg=HEAD_BG)
-        self.pills.pack(side="left", padx=10)
-
-        btns = tk.Frame(head, bg=HEAD_BG)
-        btns.pack(side="right", padx=(0, 10), fill="y")
+        btns = tk.Frame(row1, bg=HEAD_BG)
+        btns.pack(side="right")
         for txt, cmd, tip in (("✕", self.root.destroy, None),
                               ("📌", self._toggle_pin, None),
                               ("↻", self.refresh, None),
                               ("📅", self._open_calendar, None)):
             b = tk.Label(btns, text=txt, font=self.f["tab"], bg=HEAD_BG,
                          fg=HEAD_SUB, cursor="hand2")
-            b.pack(side="right", padx=5, pady=(16, 0))
+            b.pack(side="right", padx=5)
             b.bind("<Button-1>", lambda e, c=cmd: c())
             b.bind("<Enter>", lambda e, w=b: w.configure(fg=HEAD_FG))
             b.bind("<Leave>", lambda e, w=b: w.configure(fg=HEAD_SUB))
 
-        for w in (head, left, self.title_lbl, self.date_lbl, self.pills):
+        # 아랫줄: 할 일 개수와 배지를 같은 줄에 나란히 (겹치지 않게)
+        row2 = tk.Frame(head, bg=HEAD_BG)
+        row2.pack(fill="x", padx=(14, 10), pady=(2, 0))
+        self.title_lbl = tk.Label(row2, text="할 일", font=self.f["head"],
+                                  bg=HEAD_BG, fg=HEAD_FG)
+        self.title_lbl.pack(side="left")
+        self.pills = tk.Frame(row2, bg=HEAD_BG)
+        self.pills.pack(side="left", padx=(10, 0))
+
+        for w in (head, row1, row2, self.title_lbl, self.date_lbl,
+                  self.brand_lbl, self.pills):
             w.bind("<Button-1>", self._drag_start)
             w.bind("<B1-Motion>", self._drag_move)
             w.bind("<ButtonRelease-1>", self._drag_end)
@@ -251,6 +260,10 @@ class Widget:
         self.undo_btn.bind("<Button-1>", lambda e: self._undo())
         self.status = tk.Label(inner, text="", font=self.f["small"], bg=CARD_BG, fg=FAINT)
         self.status.pack(side="right")
+
+        # 이 프로그램이 왜 있는지 — 늘 보이는 자리에 한 줄
+        tk.Label(foot, text=f"{APP_NAME} · {APP_TAGLINE_SHORT}",
+                 font=self.f["small"], bg=CARD_BG, fg=FAINT)            .pack(anchor="w", padx=12, pady=(0, 7))
         self._last_done = None
         self._gs_note = ""
         self._stamp = ""
@@ -379,7 +392,7 @@ class Widget:
 
         win = tk.Toplevel(self.root)
         self._alarm_win = win
-        win.title("BrityTodo 알림")
+        win.title(f"{APP_NAME} 알림")
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg=CARD_BG, highlightbackground=TODAY_C,
@@ -541,8 +554,8 @@ class Widget:
         for n, label, colr in ((overdue, "지남", OVERDUE), (due_today, "오늘", TODAY_C)):
             if n:
                 tk.Label(self.pills, text=f"{label} {n}", font=self.f["pill"],
-                         bg=colr, fg="white", padx=7, pady=2).pack(side="left",
-                                                                   padx=(0, 5), pady=(14, 0))
+                         bg=colr, fg="white", padx=7, pady=1).pack(side="left",
+                                                                   padx=(0, 5), pady=(3, 0))
 
         # 달력 점
         marks = {}
@@ -1016,7 +1029,7 @@ class Widget:
 
     def _toast(self, msg: str):
         from tkinter import messagebox
-        messagebox.showinfo("BrityTodo", msg)
+        messagebox.showinfo(APP_NAME, msg)
 
     # ------------------------------------------------------------------
     def _run_now(self):

@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from brity_todo.titles import shorten, classify   # noqa: E402
+from meum.titles import shorten, classify   # noqa: E402
 
 LEN_LIMIT = 32
 

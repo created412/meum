@@ -6,8 +6,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from brity_todo import config                        # noqa: E402
-from brity_todo.extractor import RuleExtractor, strip_quotes, normalize_thread_key  # noqa: E402
+from meum import config                        # noqa: E402
+from meum.extractor import RuleExtractor, strip_quotes, normalize_thread_key  # noqa: E402
 
 cfg = dict(config.DEFAULTS)
 ex = RuleExtractor(cfg)
@@ -99,7 +99,7 @@ def main():
         fails.append("단순 안내가 높은 확신도로 추출됨(오탐)")
 
     # 5) 마스킹
-    from brity_todo.extractor import mask_sensitive
+    from meum.extractor import mask_sensitive
     masked = mask_sensitive(REAL_BODY)
     print(f"\n── 전화번호 마스킹: {'성공' if '031-000-0000' not in masked else '실패'}")
     if "031-000-0000" in masked:

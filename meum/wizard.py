@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-설치 마법사 — 새 컴퓨터에서 처음 실행할 때 뜬다.
+메움 설치 마법사 — 새 컴퓨터에서 처음 실행할 때 뜬다.
 
   1단계  브리티 메신저 확인
   2단계  실행 시간 설정 (아침·저녁 두 번, 각각 수정 가능)
@@ -16,11 +16,12 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
+from tkinter import font as tkfont
 from pathlib import Path
 from tkinter import messagebox, ttk
 from typing import Optional
 
-from . import config
+from . import APP_NAME, APP_TAGLINE, WINDOW_SETUP, config
 from .ui import BG, FG, MUTED, ACCENT, DANGER, WARN_BG, _center, _dpi_aware, _fonts
 
 STEPS = [
@@ -55,9 +56,11 @@ class Wizard:
         self.cfg = config.load()
         self.step = 0
         self.root = tk.Tk()
-        self.root.title("BrityTodo 설치")
+        self.root.title(WINDOW_SETUP)
         self.root.configure(bg=BG)
         self.f = _fonts()
+        self.f["hero"] = tkfont.Font(family="맑은 고딕", size=20,
+                                    weight="bold")
         self._build_frame()
         _center(self.root, 660, 560)
 
@@ -133,9 +136,23 @@ class Wizard:
 
     # ---------------- 1단계: 브리티 ----------------
     def s0_brity(self):
-        self._head("브리티 메신저를 확인합니다")
-        self._p("이 프로그램은 브리티 메신저(그리고 GOE메신저) 쪽지를 읽어 "
-                "할 일을 정리합니다.\n브리티가 실행되어 있고 로그인된 상태여야 합니다.")
+        self._head(f"{APP_NAME}을 시작합니다")
+
+        # 이 프로그램이 무엇이고 왜 있는지 — 처음 만나는 화면에서 밝힌다
+        hero = tk.Frame(self.body, bg="#0f172a")
+        hero.pack(fill="x", pady=(0, 14))
+        tk.Label(hero, text=APP_NAME, font=self.f["hero"],
+                 bg="#0f172a", fg="#7dd3fc").pack(anchor="w", padx=18, pady=(14, 0))
+        tk.Label(hero, text=APP_TAGLINE, font=self.f["body"],
+                 bg="#0f172a", fg="#e2e8f0").pack(anchor="w", padx=18, pady=(2, 4))
+        tk.Label(hero,
+                 text="쪽지는 쌓이고, 마감은 문장 속에 숨어 있습니다.\n"
+                      "그 사이로 빠져나간 일들을 대신 찾아 채워 넣습니다.",
+                 font=self.f["small"], bg="#0f172a", fg="#94a3b8",
+                 justify="left").pack(anchor="w", padx=18, pady=(0, 14))
+
+        self._p("브리티 메신저와 GOE메신저의 쪽지를 읽어 할 일을 정리합니다.\n"
+                "브리티가 실행되어 있고 로그인된 상태여야 합니다.")
 
         result = tk.Label(self.body, text="확인 중…", font=self.f["body"],
                           bg=BG, fg=MUTED, anchor="w", justify="left", wraplength=590)
@@ -270,7 +287,7 @@ class Wizard:
             "2. 확실한 할 일은 바로 패널과 달력에 들어갑니다\n"
             "3. 애매한 것은 '미확정' 표시로 올라오니 패널에서 판단하세요\n"
             "4. 끝낸 일은 네모(☐)를 눌러 지우고, 두 번 누르면 원래 쪽지가 열립니다\n"
-            "5. 바탕화면 '쪽지 정리' 바로가기로 직접 실행하면 확인 창이 뜹니다",
+            f"5. 바탕화면 '{APP_NAME} - 쪽지 정리' 로 직접 실행하면 확인 창이 뜹니다",
             bg="#f8fafc", fg=FG)
 
         self._p("계정 연결도, 휴대폰 연결도 필요 없습니다. "
@@ -310,8 +327,8 @@ def register_task(run_time: str = "08:40", lunch_time: str = "12:40") -> tuple:
     exe_path, exe_args = _split_cmd(cmd_main)
     ps = f"""
 $ErrorActionPreference = 'Stop'
-try {{ Unregister-ScheduledTask -TaskName 'DailyBrief' -TaskPath '\\BrityTodo\\' -Confirm:$false }} catch {{}}
-try {{ Unregister-ScheduledTask -TaskName 'LogonCatchUp' -TaskPath '\\BrityTodo\\' -Confirm:$false }} catch {{}}
+try {{ Unregister-ScheduledTask -TaskName 'DailyBrief' -TaskPath '\\메움\\' -Confirm:$false }} catch {{}}
+try {{ Unregister-ScheduledTask -TaskName 'LogonCatchUp' -TaskPath '\\메움\\' -Confirm:$false }} catch {{}}
 $action = New-ScheduledTaskAction -Execute {_ps_quote(exe_path)} -Argument {_ps_quote(exe_args)} -WorkingDirectory {_ps_quote(str(app_root()))}
 $t1 = New-ScheduledTaskTrigger -Daily -At '{run_time}'
 $t2 = New-ScheduledTaskTrigger -Daily -At '{lunch_time}'
@@ -319,9 +336,9 @@ $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatt
     -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 30) `
     -MultipleInstances IgnoreNew
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
-Register-ScheduledTask -TaskName 'DailyBrief' -TaskPath '\\BrityTodo\\' -Action $action `
+Register-ScheduledTask -TaskName 'DailyBrief' -TaskPath '\\메움\\' -Action $action `
     -Trigger $t1,$t2 -Settings $settings -Principal $principal `
-    -Description '브리티·GOE 쪽지를 정리해 할 일과 달력으로 옮깁니다.' | Out-Null
+    -Description '메움 — 브리티·GOE 쪽지에서 놓친 업무를 메워드립니다.' | Out-Null
 Write-Output 'OK'
 """
     try:
@@ -341,7 +358,7 @@ Write-Output 'OK'
         err = (r.stderr or r.stdout or "").strip()
         # PowerShell 이 막히면 기본 방식으로 아침 것만이라도
         r2 = subprocess.run(
-            ["schtasks", "/Create", "/TN", "BrityTodo\\DailyBrief",
+            ["schtasks", "/Create", "/TN", "메움\\DailyBrief",
              "/TR", cmd_main, "/SC", "DAILY", "/ST", run_time, "/F"],
             capture_output=True, text=True, errors="ignore")
         if r2.returncode == 0:
@@ -380,8 +397,10 @@ def create_desktop_shortcuts() -> bool:
                        else f'"{app_root() / "run.py"}" --widget')
 
         for name, args, desc in (
-                ("쪽지 정리 (BrityTodo)", args_main, "브리티·GOE 쪽지를 지금 정리합니다"),
-                ("할 일 패널 (BrityTodo)", args_widget, "바탕화면 할 일 패널을 엽니다")):
+                (f"{APP_NAME} - 쪽지 정리", args_main,
+                 "브리티·GOE 쪽지를 지금 정리합니다"),
+                (f"{APP_NAME} - 할 일 패널", args_widget,
+                 "바탕화면 할 일 패널을 엽니다")):
             lnk = sh.CreateShortcut(str(desktop / f"{name}.lnk"))
             lnk.TargetPath = exe
             lnk.Arguments = args
@@ -411,7 +430,7 @@ def register_widget_autostart() -> bool:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r"Software\Microsoft\Windows\CurrentVersion\Run",
                              0, winreg.KEY_SET_VALUE)
-        winreg.SetValueEx(key, "BrityTodoWidget", 0, winreg.REG_SZ, cmd)
+        winreg.SetValueEx(key, "메움", 0, winreg.REG_SZ, cmd)
         winreg.CloseKey(key)
         return True
     except Exception:
@@ -424,7 +443,7 @@ def unregister_widget_autostart() -> None:
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r"Software\Microsoft\Windows\CurrentVersion\Run",
                              0, winreg.KEY_SET_VALUE)
-        winreg.DeleteValue(key, "BrityTodoWidget")
+        winreg.DeleteValue(key, "메움")
         winreg.CloseKey(key)
     except Exception:
         pass
@@ -444,7 +463,7 @@ def _ps_quote(s: str) -> str:
 
 
 def unregister_task() -> None:
-    for tn in ("BrityTodo\\DailyBrief", "BrityTodo\\LogonCatchUp"):
+    for tn in ("메움\\DailyBrief", "메움\\LogonCatchUp"):
         subprocess.run(["schtasks", "/Delete", "/TN", tn, "/F"],
                        capture_output=True, text=True)
     unregister_widget_autostart()

@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from brity_todo.dateparse import parse_due  # noqa: E402
+from meum.dateparse import parse_due  # noqa: E402
 
 RECV = datetime(2026, 8, 18, 12, 47)   # 실제 쪽지 수신일시 (화요일)
 
