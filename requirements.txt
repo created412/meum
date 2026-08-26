@@ -1,0 +1,11 @@
+# 필수
+uiautomation
+pywin32
+
+# 선택 — 구글 캘린더 동기화를 쓸 때만 (기본값은 .ics 방식이라 필요 없음)
+# google-api-python-client
+# google-auth-oauthlib
+# google-auth-httplib2
+
+# 빌드용
+# pyinstaller

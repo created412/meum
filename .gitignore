@@ -1,0 +1,29 @@
+# 빌드 산출물
+dist/
+build/
+*.spec
+
+# 파이썬
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 실행 중 생성되는 개인 데이터 — 절대 커밋하지 않는다
+*.db
+config.json
+client_secret.json
+token.json
+*.ics
+logs/
+@AutomationLog.txt
+
+# 배포 패키지
+*.zip
+
+# 편집기 / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
