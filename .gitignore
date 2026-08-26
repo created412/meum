@@ -27,3 +27,6 @@ logs/
 .idea/
 Thumbs.db
 desktop.ini
+
+# 인수인계 문서는 저장소에 올리지 않음
+HANDOVER.md
