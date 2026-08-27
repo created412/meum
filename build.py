@@ -24,6 +24,7 @@ HIDDEN = [
     "win32gui", "win32con", "win32api", "win32process",
     "tkinter", "tkinter.filedialog", "tkinter.messagebox", "tkinter.ttk",
     "sqlite3", "calendar", "winsound",
+    "meum.doctor", "meum.watcher",       # 필요할 때만 불러오므로 명시한다
     # Google 캘린더
     "win32com", "win32com.client", "pythoncom",     # 휴대폰 전송(MTP)
     "googleapiclient", "googleapiclient.discovery", "googleapiclient.http",

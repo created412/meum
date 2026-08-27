@@ -162,6 +162,32 @@ class Wizard:
         nxt.configure(state="disabled")
         self._secondary("다시 확인", lambda: check())
 
+        def make_report():
+            """연결이 안 될 때, 무엇을 보고 그렇게 판단했는지 파일로 남긴다."""
+            result.configure(text="진단 보고서를 만드는 중…", fg=MUTED)
+            self.root.update()
+
+            def work():
+                try:
+                    from .doctor import save_report
+                    path = save_report()
+                    msg = ("진단 보고서를 바탕화면에 저장했습니다.\n"
+                           f"  {path.name}\n\n"
+                           "이 파일을 만든 사람에게 보내 주시면 원인을 찾을 수 있습니다.\n"
+                           "(쪽지 내용·제목·발신자는 들어 있지 않습니다)")
+                    import os
+                    try:
+                        os.startfile(str(path))
+                    except Exception:
+                        pass
+                except Exception as e:
+                    msg = f"진단 보고서를 만들지 못했습니다.\n{e}"
+                self.root.after(0, lambda: result.configure(text=msg, fg=MUTED))
+
+            threading.Thread(target=work, daemon=True).start()
+
+        self._secondary("진단 보고서", make_report)
+
         def check():
             result.configure(text="확인 중…", fg=MUTED)
             self.root.update()

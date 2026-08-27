@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import subprocess
 import time
@@ -103,10 +104,117 @@ def _visible_widget_windows() -> list:
     return res
 
 
-def find_main_window() -> Optional[int]:
-    for h, t in _visible_widget_windows():
-        if t == MAIN_TITLE:
-            return h
+def brity_pids() -> set:
+    """
+    브리티 프로세스의 PID.
+
+    실행 파일 이름을 정확히 맞추지 않는다. 학교마다 버전이 달라
+    'BrityMessenger.exe' 가 아닐 수 있기 때문이다.
+    """
+    pids = set()
+    try:
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, errors="ignore").stdout
+        for line in out.splitlines():
+            parts = [p.strip('"') for p in line.split('","')]
+            if len(parts) >= 2 and "brity" in parts[0].lower():
+                try:
+                    pids.add(int(parts[1]))
+                except ValueError:
+                    continue
+    except Exception:
+        pass
+    return pids
+
+
+def _has_renderer(hwnd: int) -> bool:
+    """내용을 그리는 자식 창이 달려 있는가 — 진짜 화면 창인지 가리는 기준."""
+    found = []
+    try:
+        win32gui.EnumChildWindows(
+            hwnd,
+            lambda h, _: (found.append(h)
+                          if win32gui.GetClassName(h) == RENDER_CLASS else None,
+                          not found)[-1],
+            None)
+    except Exception:
+        pass
+    return bool(found)
+
+
+def brity_windows() -> list:
+    """
+    브리티가 가진 창 후보들. [(hwnd, 제목, 보임, 넓이)] 를 넓은 순으로.
+
+    제목이 정확히 'Brity Messenger' 인 보이는 창만 찾던 때에는,
+    다른 선생님 PC 에서 브리티를 켜 두셨는데도 '연결 안 됨' 이 떴다.
+      · 트레이로 내려놓으면 창이 '보이지 않는' 상태가 된다
+      · 버전에 따라 제목이 다를 수 있다
+    그래서 **프로세스로** 찾고, 숨은 창도 후보에 넣는다.
+    """
+    pids = brity_pids()
+    out = []
+
+    def cb(h, _):
+        try:
+            if win32gui.GetClassName(h) != WIDGET_CLASS:
+                return True
+            if pids:
+                _, pid = win32process.GetWindowThreadProcessId(h)
+                if pid not in pids:
+                    return True
+            l, t, r, b = win32gui.GetWindowRect(h)
+            w, ht = r - l, b - t
+            if w < 200 or ht < 200:          # 풍선 도움말 따위는 거른다
+                return True
+            if not _has_renderer(h):
+                return True
+            out.append((h, win32gui.GetWindowText(h),
+                        bool(win32gui.IsWindowVisible(h)), w * ht))
+        except Exception:
+            pass
+        return True
+
+    win32gui.EnumWindows(cb, None)
+    out.sort(key=lambda x: x[3], reverse=True)
+    return out
+
+
+def _looks_like_main(title: str) -> bool:
+    """본창다운 제목인가. 버전·언어가 달라도 걸리도록 넉넉히 본다."""
+    raw = title or ""
+    t = raw.lower()
+    return ("brity" in t) or ("messenger" in t) or ("메신저" in raw)
+
+
+def find_main_window(allow_hidden: bool = True) -> Optional[int]:
+    """
+    브리티 본창을 찾는다.
+
+    제목이 딱 맞는 보이는 창 → 제목이 본창다운 창 → (그것도 없으면)
+    제목 없는 가장 큰 창 순으로 보고, 그래도 없으면 숨어 있는
+    (트레이로 내려놓은) 창까지 본다.
+
+    브리티는 'Opener' 같은 숨은 보조 창도 갖고 있어서, 무턱대고 '가장 큰
+    창'을 고르면 엉뚱한 창을 잡는다. 그래서 제목을 먼저 본다.
+    """
+    cands = brity_windows()
+    if not cands:
+        return None
+
+    for want_visible in (True, False):
+        if not want_visible and not allow_hidden:
+            break
+        pool = [c for c in cands if c[2] == want_visible]
+        for h, t, _v, _a in pool:
+            if t == MAIN_TITLE:
+                return h
+        for h, t, _v, _a in pool:
+            if _looks_like_main(t):
+                return h
+        untitled = [c for c in pool if not (c[1] or "").strip()]
+        if untitled:
+            return untitled[0][0]
     return None
 
 
@@ -130,26 +238,91 @@ def wake_accessibility(hwnd: int) -> None:
 
 
 def brity_is_running() -> bool:
-    try:
-        out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq BrityMessenger.exe"],
-                             capture_output=True, text=True, errors="ignore").stdout
-        return "BrityMessenger.exe" in out
-    except Exception:
-        return False
+    """실행 파일 이름이 학교마다 다를 수 있어 'brity' 가 들어가면 인정한다."""
+    return bool(brity_pids())
+
+
+def _running_exe_path() -> Optional[Path]:
+    """이미 돌고 있는 브리티의 실행 파일 경로를 프로세스에서 직접 알아낸다."""
+    import ctypes
+    from ctypes import wintypes
+    for pid in brity_pids():
+        h = None
+        try:
+            h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)  # LIMITED_INFO
+            if not h:
+                continue
+            buf = ctypes.create_unicode_buffer(1024)
+            size = wintypes.DWORD(1024)
+            if ctypes.windll.kernel32.QueryFullProcessImageNameW(
+                    h, 0, buf, ctypes.byref(size)):
+                p = Path(buf.value)
+                if p.exists():
+                    return p
+        except Exception:
+            continue
+        finally:
+            if h:
+                try:
+                    ctypes.windll.kernel32.CloseHandle(h)
+                except Exception:
+                    pass
+    return None
 
 
 def find_brity_exe() -> Optional[Path]:
-    candidates = [
-        Path(r"C:\Program Files\Samsung\BrityMessenger\BrityMessenger.exe"),
-        Path(r"C:\Program Files (x86)\Samsung\BrityMessenger\BrityMessenger.exe"),
+    """
+    브리티 실행 파일 찾기.
+
+    학교 PC 마다 설치 위치가 다르다. 삼성 폴더만 뒤지면 못 찾는 컴퓨터가
+    나오므로, 돌고 있는 프로세스 → 흔한 설치 경로 → 시작 메뉴 바로가기
+    순으로 넓게 찾는다.
+    """
+    p = _running_exe_path()
+    if p:
+        return p
+
+    roots = [
+        Path(r"C:\Program Files\Samsung"),
+        Path(r"C:\Program Files (x86)\Samsung"),
+        Path(r"C:\Program Files"),
+        Path(r"C:\Program Files (x86)"),
     ]
-    for c in candidates:
-        if c.exists():
-            return c
-    for root in (Path(r"C:\Program Files\Samsung"), Path(r"C:\Program Files (x86)\Samsung")):
-        if root.exists():
-            for p in root.rglob("BrityMessenger.exe"):
-                return p
+    local = os.environ.get("LOCALAPPDATA")
+    if local:
+        roots.insert(0, Path(local) / "Programs")
+        roots.insert(1, Path(local))
+    for root in roots:
+        try:
+            if not root.exists():
+                continue
+            # 통째로 뒤지면 느리므로 브리티로 보이는 폴더만 본다
+            for d in root.iterdir():
+                if not d.is_dir() or "brity" not in d.name.lower():
+                    continue
+                for f in d.rglob("*.exe"):
+                    if "brity" in f.name.lower():
+                        return f
+        except Exception:
+            continue
+
+    # 시작 메뉴 바로가기가 가리키는 곳
+    try:
+        import win32com.client
+        sh = win32com.client.Dispatch("WScript.Shell")
+        menus = [Path(os.environ.get("ProgramData", "")) / r"Microsoft\Windows\Start Menu",
+                 Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Start Menu"]
+        for m in menus:
+            if not m.exists():
+                continue
+            for lnk in m.rglob("*.lnk"):
+                if "brity" not in lnk.stem.lower():
+                    continue
+                target = Path(sh.CreateShortcut(str(lnk)).TargetPath)
+                if target.exists():
+                    return target
+    except Exception:
+        pass
     return None
 
 
@@ -276,6 +449,7 @@ class BrityCollector:
         self.hwnd: Optional[int] = None
         self._saved_cursor = None
         self._was_iconic = False
+        self._was_hidden = False
 
     # ---------- 준비 ----------
     @staticmethod
@@ -293,30 +467,38 @@ class BrityCollector:
         self.hwnd = ensure_brity(launch=self.cfg.get("launch_brity_if_closed", True))
         try:
             self._was_iconic = bool(win32gui.IsIconic(self.hwnd))
+            # 트레이로 내려놓으면 '보이지 않는 창'이 된다.
+            # 끝나면 있던 그대로 되돌려 놓아야 한다.
+            self._was_hidden = not bool(win32gui.IsWindowVisible(self.hwnd))
         except Exception:
             self._was_iconic = False
+            self._was_hidden = False
         wake_accessibility(self.hwnd)
         time.sleep(1.5)
-        state = " (최소화 상태)" if self._was_iconic else ""
+        state = (" (트레이 상태)" if self._was_hidden
+                 else " (최소화 상태)" if self._was_iconic else "")
         self.log(f"브리티 창 연결 (hwnd={self.hwnd}){state}")
 
     def ensure_restored(self) -> bool:
         """
-        본문을 열려면 창이 복원돼 있어야 한다.
+        본문을 열려면 창이 화면에 있어야 한다.
 
         목록 '판독'은 최소화 상태에서도 되지만, 창을 클릭해 상세 창을 여는 것은
         최소화 상태에서 좌표가 무의미해져 실패한다(실측 확인).
+        트레이로 내려놓아 아예 숨어 있는 경우도 마찬가지다.
         따라서 포커스는 뺏지 않고(SW_SHOWNOACTIVATE) 화면에만 되살린다.
         """
         try:
-            if not win32gui.IsIconic(self.hwnd):
+            hidden = not win32gui.IsWindowVisible(self.hwnd)
+            if not hidden and not win32gui.IsIconic(self.hwnd):
                 return True
             win32gui.ShowWindow(self.hwnd, win32con.SW_SHOWNOACTIVATE)
             time.sleep(1.2)
             wake_accessibility(self.hwnd)
             time.sleep(0.8)
-            ok = not win32gui.IsIconic(self.hwnd)
-            self.log("  · 본문 열람을 위해 브리티 창을 복원했습니다"
+            ok = (win32gui.IsWindowVisible(self.hwnd)
+                  and not win32gui.IsIconic(self.hwnd))
+            self.log("  · 본문 열람을 위해 브리티 창을 되살렸습니다"
                      f"{'' if ok else ' (실패)'}")
             return ok
         except Exception:
@@ -719,8 +901,14 @@ class BrityCollector:
             pass
 
     def restore(self) -> None:
-        # 우리가 복원한 창이라면 원래대로 다시 최소화한다
-        if self._was_iconic and self.hwnd:
+        # 우리가 되살린 창이라면 원래 있던 상태로 돌려놓는다
+        if self.hwnd and getattr(self, "_was_hidden", False):
+            try:
+                if win32gui.IsWindowVisible(self.hwnd):
+                    win32gui.ShowWindow(self.hwnd, win32con.SW_HIDE)
+            except Exception:
+                pass
+        elif self._was_iconic and self.hwnd:
             try:
                 if not win32gui.IsIconic(self.hwnd):
                     win32gui.ShowWindow(self.hwnd, win32con.SW_MINIMIZE)

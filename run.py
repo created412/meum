@@ -10,6 +10,7 @@
     메움.exe --trigger daily 작업 스케줄러가 호출하는 형태
     메움.exe --list-only     목록만 읽기 (아무것도 바꾸지 않음)
     메움.exe --status        실행 이력 확인
+    메움.exe --doctor        진단 보고서 만들기 (연결이 안 될 때)
     메움.exe --uninstall     자동 실행 등록만 해제
 """
 from __future__ import annotations
@@ -90,6 +91,8 @@ def main() -> int:
     p.add_argument("--headless", action="store_true", help="확인 창 없이 실행")
     p.add_argument("--list-only", action="store_true", help="목록만 읽고 종료")
     p.add_argument("--status", action="store_true", help="실행 이력 확인")
+    p.add_argument("--doctor", action="store_true",
+                   help="진단 보고서를 만든다 (연결이 안 될 때)")
     p.add_argument("--force", action="store_true", help="오늘 이미 실행했어도 다시 실행")
     p.add_argument("--uninstall", action="store_true", help="자동 실행 등록 해제")
     p.add_argument("--widget", action="store_true", help="바탕화면 할 일 패널 열기")
@@ -106,6 +109,9 @@ def main() -> int:
         from meum.widget import show
         show()
         return 0
+    if args.doctor:
+        from meum.doctor import run_doctor
+        return run_doctor()
     if args.status:
         return cmd_status()
     if args.list_only:
