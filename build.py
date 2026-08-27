@@ -89,6 +89,11 @@ def main() -> int:
     if first.exists():
         shutil.copy2(first, out / "★ 처음이라면.txt")
 
+    # 연결이 안 될 때 두 번 클릭으로 진단 보고서를 만드는 배치
+    doctor_bat = ROOT / "진단하기.bat"
+    if doctor_bat.exists():
+        shutil.copy2(doctor_bat, out / "진단하기.bat")
+
     print(f"\n완료: {out}")
     print(f"실행 파일: {out / (NAME + '.exe')}")
     print("\n이 폴더를 통째로 다른 PC에 옮기면 Python 설치 없이 바로 실행됩니다.")
