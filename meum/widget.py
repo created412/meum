@@ -16,6 +16,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -146,6 +147,9 @@ class Widget:
         self.cal_y, self.cal_m = today.year, today.month
         self.day_filter = None
         self._drag = None
+        self._cache = None            # 짧은 시간 안의 반복 조회용 (구형 노트북 배려)
+        self._cache_at = 0.0
+        self._sig = None              # 마지막으로 그린 내용의 지문
         self._alerted = {}            # 알람 중복 방지: {task_id: {"stages", "last"}}
         self._alarm_win = None
         self._build()
@@ -153,6 +157,7 @@ class Widget:
         self.refresh()
         self.root.after(8000, self._check_alarms)   # 켜지고 잠시 뒤 첫 점검
         self.root.after(REFRESH_MS, self._tick)
+        self._start_watch()
 
     # ------------------------------------------------------------------
     # 뼈대
@@ -175,7 +180,7 @@ class Widget:
 
         btns = tk.Frame(row1, bg=HEAD_BG)
         btns.pack(side="right")
-        for txt, cmd, tip in (("✕", self.root.destroy, None),
+        for txt, cmd, tip in (("✕", self._close_panel, None),
                               ("📌", self._toggle_pin, None),
                               ("↻", self.refresh, None),
                               ("📅", self._open_calendar, None)):
@@ -248,7 +253,7 @@ class Widget:
         tk.Frame(foot, bg=LINE, height=1).pack(fill="x")
         inner = tk.Frame(foot, bg=CARD_BG)
         inner.pack(fill="x", padx=10, pady=8)
-        self.run_btn = tk.Button(inner, text="⟳  지금 쪽지 정리", font=self.f["btn"],
+        self.run_btn = tk.Button(inner, text="⟳  지금 확인", font=self.f["btn"],
                                  relief="flat", bg=ACCENT, fg="white",
                                  activebackground=ACCENT_DARK, activeforeground="white",
                                  cursor="hand2", padx=12, pady=4,
@@ -300,6 +305,32 @@ class Widget:
         self.cfg = config.update(widget_x=self.root.winfo_x(),
                                  widget_y=self.root.winfo_y())
 
+    def _close_panel(self):
+        """
+        닫기 전에 한 번 여쭙는다.
+
+        이제 이 패널이 곧 엔진이다 — 닫으면 새 쪽지 자동 정리도 함께 멈춘다.
+        그 사실을 모른 채 닫고 '왜 안 되지' 하는 일을 막는다.
+        (아침·점심 보충 점검은 패널과 무관하게 그대로 돈다)
+        """
+        from tkinter import messagebox
+        if self.cfg.get("watch_enabled", True):
+            ok = messagebox.askyesno(
+                APP_NAME,
+                "패널을 닫으면 새 쪽지 자동 정리도 함께 멈춥니다.\n"
+                f"(아침·점심 보충 점검 {self.cfg.get('run_time', '')} · "
+                f"{self.cfg.get('run_time_lunch', '')} 은 그대로 돕니다)\n\n"
+                "그래도 닫을까요?",
+                default="no", parent=self.root)
+            if not ok:
+                return
+        try:
+            if getattr(self, "watcher", None):
+                self.watcher.stop()
+        except Exception:
+            pass
+        self.root.destroy()
+
     def _toggle_pin(self):
         v = not bool(self.cfg.get("widget_always_on_top", False))
         self.cfg = config.update(widget_always_on_top=v)
@@ -307,8 +338,85 @@ class Widget:
         self.status.configure(text="항상 위 켬" if v else "항상 위 끔")
 
     # ------------------------------------------------------------------
-    def _tick(self):
+    # 상주 감시 — 정해진 시각을 기다리지 않고, 조용할 때 알아서 메운다
+    # ------------------------------------------------------------------
+    def _start_watch(self):
+        self.watcher = None
+        if not self.cfg.get("watch_enabled", True):
+            return
+        try:
+            from .watcher import Watcher
+        except Exception:
+            return
+
+        def done(added, reason):
+            # 감시 스레드에서 불리므로 tkinter 를 직접 만지지 않는다
+            self.root.after(0, lambda: self._after_watch(added, reason))
+
+        self.watcher = Watcher(self.cfg, on_done=done,
+                               log=self._watch_log, count_tasks=self._task_count)
+        self.watcher.start()
+
+    def _watch_log(self, msg: str):
+        try:
+            self.root.after(0, lambda: self.status.configure(text=str(msg)[:38]))
+        except Exception:
+            pass
+
+    def _task_count(self) -> int:
+        """지금 남아 있는 할 일 수 — 새로 들어온 것이 있는지 세는 데 쓴다."""
+        try:
+            st = State()
+            n = st.con.execute(
+                "SELECT COUNT(*) c FROM tasks WHERE status IN ('approved','pending')"
+            ).fetchone()["c"]
+            st.close()
+            return int(n)
+        except Exception:
+            return 0
+
+    def _after_watch(self, added: int, reason: str):
         self.refresh()
+        self._check_alarms()
+        now = datetime.now()
+        if added and self.cfg.get("watch_toast", True):
+            self._new_task_toast(added)
+            self.status.configure(text=f"{now:%H:%M} 새 할 일 {added}건")
+        else:
+            self.status.configure(text=f"{now:%H:%M} 확인함")
+
+    def _new_task_toast(self, added: int):
+        """새로 메워 넣은 할 일이 있을 때 뜨는 작은 알림 (조용하고 스스로 사라진다)."""
+        try:
+            import winsound
+            winsound.MessageBeep(winsound.MB_OK)
+        except Exception:
+            pass
+        try:
+            win = tk.Toplevel(self.root)
+            win.overrideredirect(True)
+            win.attributes("-topmost", True)
+            win.configure(bg=CARD_BG, highlightbackground=ACCENT, highlightthickness=2)
+
+            head = tk.Frame(win, bg=ACCENT)
+            head.pack(fill="x")
+            tk.Label(head, text=f"{APP_NAME} · 새 할 일 {added}건",
+                     font=self.f["btn"], bg=ACCENT, fg="white")                .pack(side="left", padx=12, pady=6)
+            tk.Label(win, text="쪽지에서 찾아 패널에 채워 넣었습니다.",
+                     font=self.f["small"], bg=CARD_BG, fg=MUTED)                .pack(anchor="w", padx=12, pady=(8, 10))
+
+            win.update_idletasks()
+            l, t, r, b = _work_area()
+            w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+            win.geometry(f"+{r - w - 20}+{b - h - 20}")
+            win.bind("<Button-1>", lambda e: win.destroy())
+            win.after(7000, lambda: win.winfo_exists() and win.destroy())
+        except Exception:
+            pass
+
+    # ------------------------------------------------------------------
+    def _tick(self):
+        self.refresh(only_if_changed=True)
         self._sync_google()
         self._check_alarms()
         self.root.after(REFRESH_MS, self._tick)
@@ -499,8 +607,25 @@ class Widget:
         self.refresh()
         self._sync_google()
 
+    def _signature(self):
+        """지금 화면에 그려야 할 내용의 지문. 같으면 다시 그릴 필요가 없다."""
+        rows, last, events = self._load()
+        return (
+            self.view, self.day_filter, self.cal_y, self.cal_m,
+            len(events), str(last),
+            tuple(sorted(
+                (r["task_id"], r.get("status"), r.get("due_at"),
+                 r.get("short_title") or r.get("title"))
+                for r in rows)),
+        )
+
     # ------------------------------------------------------------------
-    def _load(self):
+    def _load(self, force: bool = False):
+        # 같은 틱 안에서 refresh 와 알람 점검이 잇달아 부르므로 잠깐 캐시한다.
+        # 화면을 바꾸는 동작(완료 체크 등)은 force=True 로 부른다.
+        now = time.monotonic()
+        if not force and self._cache is not None and now - self._cache_at < 3.0:
+            return self._cache
         st = State()
         rows = [dict(r) for r in st.con.execute("""
             SELECT t.*, m.subject AS src_subject, m.sender AS src_sender,
@@ -517,10 +642,26 @@ class Widget:
         except Exception:
             events = []
         st.close()
-        return rows, last, events
+        self._cache = (rows, last, events)
+        self._cache_at = time.monotonic()
+        return self._cache
 
     # ------------------------------------------------------------------
-    def refresh(self):
+    def refresh(self, only_if_changed: bool = False):
+        # 1분마다 도는 정기 갱신에서, 내용이 그대로면 위젯을 다시 만들지 않는다.
+        # 카드 수십 개를 destroy/create 하는 것이 이 프로그램에서 가장 무거운 일이라
+        # 구형 노트북에서는 이것만으로도 화면이 걸리는 느낌을 준다.
+        if only_if_changed:
+            try:
+                sig = self._signature()
+            except Exception:
+                sig = None
+            if sig is not None and sig == self._sig:
+                return
+            self._sig = sig
+        else:
+            self._sig = None
+
         for w in self.body.winfo_children():
             w.destroy()
         for k, b in self.tab_btns.items():
@@ -530,7 +671,8 @@ class Widget:
                 b.configure(bg=PAGE_BG, fg=MUTED, font=self.f["tab"])
 
         try:
-            rows, last, events = self._load()
+            # 사용자가 직접 일으킨 갱신이면 반드시 DB 를 다시 읽는다
+            rows, last, events = self._load(force=not only_if_changed)
         except Exception as e:
             tk.Label(self.body, text=f"목록을 읽지 못했습니다.\n{e}", font=self.f["item"],
                      bg=PAGE_BG, fg=MUTED, wraplength=300, justify="left").pack(pady=20)
@@ -1037,16 +1179,20 @@ class Widget:
 
         def work():
             try:
+                # 확인 창 없이 조용히 돈다 — 감시가 하는 일과 같다.
+                # 다만 선생님이 직접 누르신 것이므로 중간에 멈추지 않는다.
                 if getattr(sys, "frozen", False):
-                    cmd = [sys.executable, "--force"]
+                    cmd = [sys.executable]
                 else:
                     cmd = [sys.executable,
-                           str(Path(__file__).resolve().parents[1] / "run.py"), "--force"]
-                subprocess.run(cmd, capture_output=True)
+                           str(Path(__file__).resolve().parents[1] / "run.py")]
+                cmd += ["--trigger", "manual", "--headless", "--force"]
+                subprocess.run(cmd, capture_output=True,
+                               creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             except Exception:
                 pass
             self.root.after(0, lambda: (
-                self.run_btn.configure(state="normal", text="⟳  지금 쪽지 정리"),
+                self.run_btn.configure(state="normal", text="⟳  지금 확인"),
                 self.refresh()))
 
         threading.Thread(target=work, daemon=True).start()

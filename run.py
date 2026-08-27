@@ -2,9 +2,10 @@
 """
 메움 — 메신저에서 놓친 선생님들의 업무를 메워드립니다.
 
-    메움.exe                 처음이면 설치 마법사, 이후엔 바로 정리
+    메움.exe                 처음이면 설치 마법사, 이후엔 할 일 패널
     메움.exe --setup         설치 마법사 다시 열기
-    메움.exe --widget        바탕화면 할 일 패널
+    메움.exe --widget        바탕화면 할 일 패널 (기본과 같음)
+    메움.exe --collect       지금 당장 쪽지 정리 (확인 창을 띄움)
     메움.exe --calendar      달력
     메움.exe --trigger daily 작업 스케줄러가 호출하는 형태
     메움.exe --list-only     목록만 읽기 (아무것도 바꾸지 않음)
@@ -84,7 +85,7 @@ def main() -> int:
     p = argparse.ArgumentParser(prog="메움",
                                 description="메움 — 메신저에서 놓친 선생님들의 업무를 메워드립니다")
     p.add_argument("--trigger", default="manual",
-                   choices=["manual", "daily", "logon", "extra"])
+                   choices=["manual", "daily", "logon", "extra", "watch"])
     p.add_argument("--setup", action="store_true", help="설치 마법사 열기")
     p.add_argument("--headless", action="store_true", help="확인 창 없이 실행")
     p.add_argument("--list-only", action="store_true", help="목록만 읽고 종료")
@@ -92,6 +93,8 @@ def main() -> int:
     p.add_argument("--force", action="store_true", help="오늘 이미 실행했어도 다시 실행")
     p.add_argument("--uninstall", action="store_true", help="자동 실행 등록 해제")
     p.add_argument("--widget", action="store_true", help="바탕화면 할 일 패널 열기")
+    p.add_argument("--collect", action="store_true",
+                   help="지금 쪽지를 정리한다 (확인 창을 띄움)")
     p.add_argument("--calendar", action="store_true", help="달력 열기")
     args = p.parse_args()
 
@@ -121,6 +124,14 @@ def main() -> int:
         wizard.run_wizard()
         return 0
 
+    # 그냥 두 번 클릭했다면 '할 일 패널'을 연다.
+    # 쪽지 정리는 패널이 지켜보다가 조용할 때 알아서 하므로,
+    # 선생님이 정리를 '실행'하실 일은 없다. (--collect 로는 여전히 가능)
+    if args.trigger == "manual" and not args.collect and not args.headless:
+        from meum.widget import show
+        show()
+        return 0
+
     # 중복 실행 방지.
     # 하루 두 번(아침·저녁) 돌므로 '오늘 이미 했나'가 아니라
     # '최근 90분 안에 했나'로 거른다 — 보충 실행이 겹치는 것만 막는다.
@@ -137,9 +148,17 @@ def main() -> int:
     # 교사가 패널에서 판단한다. 바로가기로 직접 실행하면 확인 창이 뜬다.
     cfg = config.load()
     headless = args.headless or (
-        args.trigger in ("daily", "logon") and cfg.get("auto_mode", True))
+        args.trigger in ("daily", "logon", "watch") and cfg.get("auto_mode", True))
 
-    return Runner(trigger=args.trigger, headless=headless).run()
+    # 감시가 부른 정리는, 선생님이 자리에 돌아오시면 그 자리에서 멈춘다.
+    # (이미 읽은 쪽지는 저장되고, 못 읽은 쪽지는 다음 기회에 그대로 다시 온다)
+    should_stop = None
+    if args.trigger == "watch":
+        from meum.watcher import user_is_back
+        should_stop = user_is_back
+
+    return Runner(trigger=args.trigger, headless=headless,
+                  should_stop=should_stop).run()
 
 
 if __name__ == "__main__":

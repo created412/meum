@@ -193,9 +193,10 @@ class Wizard:
 
     # ---------------- 2단계: 실행 시간 ----------------
     def s1_times(self):
-        self._head("자동 점검 시각을 직접 정해 주세요")
-        self._p("하루 두 번, 정한 시각에 창 없이 조용히 새 쪽지를 정리해\n"
-                "바탕화면 패널에 반영합니다. 시각은 선생님이 직접 입력합니다.")
+        self._head("얼마나 자주 메울지 정해 주세요")
+        self._p("평소에는 패널이 조용히 지켜보다가, 새 쪽지가 오고 선생님이\n"
+                "자리를 비우신 사이에 알아서 정리합니다.\n"
+                "아래 두 시각은 컴퓨터가 꺼져 있었을 때를 위한 보충 점검입니다.")
 
         # 아직 직접 입력한 적이 없으면 빈칸으로 시작한다.
         # 기본값을 채워 두면 그냥 넘어가 버려서 '자기 시각'이 되지 않는다.
@@ -206,7 +207,7 @@ class Wizard:
         grid = tk.Frame(self.body, bg=BG)
         grid.pack(anchor="w", pady=(12, 4))
 
-        tk.Label(grid, text="1차 점검", font=self.f["body"], bg=BG, fg=FG)\
+        tk.Label(grid, text="보충 점검 1", font=self.f["body"], bg=BG, fg=FG)\
             .grid(row=0, column=0, sticky="w", pady=4)
         self.t1_var = tk.StringVar(value=v1)
         e1 = tk.Entry(grid, textvariable=self.t1_var, font=self.f["body"], width=8)
@@ -214,7 +215,7 @@ class Wizard:
         tk.Label(grid, text="예: 08:40  (출근 직후 권장)", font=self.f["small"],
                  bg=BG, fg=MUTED).grid(row=0, column=2, padx=(12, 0), sticky="w")
 
-        tk.Label(grid, text="2차 점검", font=self.f["body"], bg=BG, fg=FG)\
+        tk.Label(grid, text="보충 점검 2", font=self.f["body"], bg=BG, fg=FG)\
             .grid(row=1, column=0, sticky="w", pady=4)
         self.t2_var = tk.StringVar(value=v2)
         tk.Entry(grid, textvariable=self.t2_var, font=self.f["body"], width=8)\
@@ -223,10 +224,16 @@ class Wizard:
                  font=self.f["small"],
                  bg=BG, fg=MUTED).grid(row=1, column=2, padx=(12, 0), sticky="w")
 
+        tk.Label(grid, text="확인 간격", font=self.f["body"], bg=BG, fg=FG)            .grid(row=2, column=0, sticky="w", pady=4)
+        self.gap_var = tk.StringVar(value=str(self.cfg.get("watch_idle_gap_min", 20)))
+        tk.Entry(grid, textvariable=self.gap_var, font=self.f["body"], width=8)            .grid(row=2, column=1, padx=(12, 0))
+        tk.Label(grid, text="분마다  (자리를 비우신 동안에만)", font=self.f["small"],
+                 bg=BG, fg=MUTED).grid(row=2, column=2, padx=(12, 0), sticky="w")
+
         self._box(
-            "창은 뜨지 않습니다. 확실한 할 일은 바로 저장되고,\n"
-            "애매한 것은 패널에 '미확정'으로 표시되어 거기서 판단하시면 됩니다.\n"
-            "그 시각에 컴퓨터가 꺼져 있었다면, 켠 뒤 자동으로 보충 실행됩니다.")
+            "창은 뜨지 않습니다. 타자를 치고 계시거나, 메신저를 쓰시는 중이거나,\n"
+            "수업(발표) 중일 때는 건드리지 않고 기다립니다.\n"
+            "정리 도중 자리에 돌아오시면 그 자리에서 멈추고 다음 기회로 미룹니다.")
 
         status = tk.Label(self.body, text="", font=self.f["body"], bg=BG, fg=MUTED,
                           anchor="w", justify="left", wraplength=590)
@@ -251,8 +258,15 @@ class Wizard:
                                           "HH:MM 형식으로 넣어 주세요 (예: 08:40)",
                                      fg=DANGER)
                     return
+            try:
+                gap = max(1, min(240, int(float(self.gap_var.get().strip() or 20))))
+            except ValueError:
+                status.configure(text="확인 간격은 숫자(분)로 넣어 주세요. 예: 20",
+                                 fg=DANGER)
+                return
             self.cfg = config.update(run_time=t1, run_time_lunch=t2,
-                                     times_confirmed=True)
+                                     times_confirmed=True,
+                                     watch_idle_gap_min=gap)
             status.configure(text="등록 중…", fg=MUTED)
             self.root.update()
             ok, msg = register_task(t1, t2)
@@ -269,7 +283,7 @@ class Wizard:
                                "(나중에 --setup 으로 다시 시도할 수 있습니다)",
                     fg=DANGER)
 
-        self._primary("이 시각으로 등록하고 다음", save_and_next)
+        self._primary("이대로 등록하고 다음", save_and_next)
         self._secondary("이전", self.prev_step, side="left")
 
     # ---------------- 3단계: 완료 ----------------
@@ -278,29 +292,30 @@ class Wizard:
         t1 = self.cfg.get("run_time", "08:40")
         t2 = self.cfg.get("run_time_lunch", "12:40")
 
-        self._p(f"자동 정리 : 매일 {t1} · {t2}, 창 없이 조용히")
+        self._p("자동 정리 : 쪽지가 오면 수시로, 창 없이 조용히")
+        self._p(f"보충 점검 : 매일 {t1} · {t2} (컴퓨터가 꺼져 있었을 때를 위해)")
         self._p("일정 확인 : 바탕화면 오른쪽 할 일 패널과 안에 든 달력")
         self._p("")
         self._p("이렇게 돌아갑니다.", font="bold")
         self._box(
-            "1. 아침·저녁 정해진 시각에 새 쪽지를 조용히 읽어 정리합니다\n"
+            "1. 패널이 조용히 지켜보다가, 자리를 비우신 사이에 새 쪽지를 정리합니다\n"
             "2. 확실한 할 일은 바로 패널과 달력에 들어갑니다\n"
             "3. 애매한 것은 '미확정' 표시로 올라오니 패널에서 판단하세요\n"
             "4. 끝낸 일은 네모(☐)를 눌러 지우고, 두 번 누르면 원래 쪽지가 열립니다\n"
-            f"5. 바탕화면 '{APP_NAME} - 쪽지 정리' 로 직접 실행하면 확인 창이 뜹니다",
+            "5. 근무 중이거나 수업(발표) 중에는 건드리지 않고 기다립니다",
             bg="#f8fafc", fg=FG)
 
         self._p("계정 연결도, 휴대폰 연결도 필요 없습니다. "
                 "이 컴퓨터 안에서만 동작합니다.", color=MUTED, font="small")
 
-        def finish(run_now: bool):
+        def finish(open_panel: bool):
             mark_configured()
             self.root.destroy()
-            if run_now:
-                from .app import Runner
-                Runner(trigger="manual").run()
+            if open_panel:
+                from .widget import show
+                show()
 
-        self._primary("지금 정리 실행", lambda: finish(True))
+        self._primary("할 일 패널 열기", lambda: finish(True))
         self._secondary("나중에", lambda: finish(False))
         self._secondary("이전", self.prev_step, side="left")
 
@@ -371,7 +386,11 @@ Write-Output 'OK'
 
 def create_desktop_shortcuts() -> bool:
     """
-    바탕화면에 바로가기 두 개를 만든다.
+    바탕화면에 바로가기 하나를 만든다 — '할 일 패널'.
+
+    예전에는 '쪽지 정리' 바로가기도 두었지만, 이제 패널이 스스로 지켜보다가
+    조용할 때 알아서 정리하므로 선생님이 정리를 '실행'하실 일이 없다.
+    (그래도 필요하면 패널 아래 '지금 확인' 단추를 누르면 된다)
 
     이 프로그램은 exe 옆의 _internal 폴더와 한 몸이라, exe 만 바탕화면에
     복사하면 'Failed to load Python DLL' 로 죽는다 (실제 발생).
@@ -392,15 +411,19 @@ def create_desktop_shortcuts() -> bool:
             return False
         sh = win32com.client.Dispatch("WScript.Shell")
 
-        args_main = "" if getattr(sys, "frozen", False) else f'"{app_root() / "run.py"}"'
         args_widget = ("--widget" if getattr(sys, "frozen", False)
                        else f'"{app_root() / "run.py"}" --widget')
 
+        # 옛 '쪽지 정리' 바로가기가 남아 있으면 치운다
+        for stale in (f"{APP_NAME} - 쪽지 정리.lnk", "BrityTodo - 쪽지 정리.lnk"):
+            try:
+                (desktop / stale).unlink()
+            except Exception:
+                pass
+
         for name, args, desc in (
-                (f"{APP_NAME} - 쪽지 정리", args_main,
-                 "브리티·GOE 쪽지를 지금 정리합니다"),
                 (f"{APP_NAME} - 할 일 패널", args_widget,
-                 "바탕화면 할 일 패널을 엽니다")):
+                 f"{APP_NAME} — 놓친 업무를 메워드립니다"),):
             lnk = sh.CreateShortcut(str(desktop / f"{name}.lnk"))
             lnk.TargetPath = exe
             lnk.Arguments = args

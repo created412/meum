@@ -338,7 +338,8 @@ class GoeCollector:
 
     # ---------- 수집 ----------
     def collect(self, known_keys: Set[str], max_rows: int = MAX_ROWS,
-                progress: Optional[Callable[[int, str], None]] = None) -> List[GoeNote]:
+                progress: Optional[Callable[[int, str], None]] = None,
+                should_stop: Optional[Callable[[], bool]] = None) -> List[GoeNote]:
         """
         위에서부터 훑다가 이미 본 쪽지를 만나면 멈춘다.
         받은 쪽지함은 최신순이므로 그 아래는 전부 이미 본 것이다.
@@ -351,6 +352,9 @@ class GoeCollector:
         for row in range(max_rows):
             y = t + 30 + row * ROW_H
             if y > b - 10:
+                break
+            if should_stop and row and should_stop():
+                self.log("  · 선생님이 자리에 돌아오셔서 여기까지만 확인했습니다")
                 break
             if progress:
                 progress(row, f"GOE 쪽지 {row + 1}번째 확인 중")

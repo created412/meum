@@ -77,10 +77,16 @@ def main() -> int:
 
     out = DIST / NAME
     # 사용 설명서를 함께 넣는다
-    for f in ("README.md", "사용설명서.txt"):
+    for f in ("README.md", "사용설명서.txt", "PRIVACY.md", "LICENSE"):
         src = ROOT / f
         if src.exists():
             shutil.copy2(src, out / f)
+
+    # 압축을 푼 사람이 가장 먼저 볼 안내. 빌드할 때마다 dist 를 비우므로
+    # 손으로 넣어 두면 다음 빌드에서 사라진다 — 그래서 여기서 만든다.
+    first = ROOT / "처음이라면.txt"
+    if first.exists():
+        shutil.copy2(first, out / "★ 처음이라면.txt")
 
     print(f"\n완료: {out}")
     print(f"실행 파일: {out / (NAME + '.exe')}")

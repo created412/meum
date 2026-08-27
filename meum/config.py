@@ -30,6 +30,16 @@ DEFAULTS = {
     # 바로가기로 직접 실행할 때만 확인 창이 뜬다.
     "auto_mode": True,
 
+    # --- 상주 감시 (수시 반영) ---
+    # 정해진 시각만 기다리지 않고, 패널이 조용히 지켜보다가
+    # 선생님이 자리를 비운 사이에 정리한다. 자세한 규칙은 watcher.py 참고.
+    "watch_enabled": True,
+    "watch_poll_sec": 20,            # 창 목록만 훑는 주기(초) — 부하 거의 없음
+    "watch_idle_sec": 45,            # 이만큼 입력이 없으면 '자리 비움'으로 본다
+    "watch_idle_gap_min": 20,        # 신호가 없어도 조용하면 이 간격으로 한 번 확인
+    "watch_max_gap_min": 120,        # 이만큼 밀리면 자리에 계셔도 한 번은 정리
+    "watch_toast": True,             # 새 할 일이 생기면 알려줄까
+
     # --- 오늘 마감 알람 (깜빡함 방지) ---
     "alarm_enabled": True,
     "remind_before_min": 60,        # 마감 몇 분 전에 미리 알릴까

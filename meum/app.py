@@ -16,7 +16,7 @@ import sys
 import traceback
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from . import WINDOW_PANEL, calendar_sync, config, extractor as extractor_mod, ui
 from .collector import (BrityCollector, CollectorError, ListedNote,
@@ -54,10 +54,15 @@ def setup_logging() -> logging.Logger:
 
 class Runner:
     def __init__(self, cfg: Optional[dict] = None, trigger: str = "manual",
-                 headless: bool = False):
+                 headless: bool = False,
+                 should_stop: Optional[Callable[[], bool]] = None):
         self.cfg = cfg or config.load()
         self.trigger = trigger
         self.headless = headless
+        # 감시가 부른 정리는 선생님이 자리에 돌아오시면 멈춘다.
+        # 못 읽은 쪽지는 '읽음' 표시가 되지 않으므로 다음 기회에 그대로 다시 온다.
+        self.should_stop = should_stop
+        self.stopped_early = False
         self.log = setup_logging()
         self.state = State()
 
@@ -144,7 +149,14 @@ class Runner:
                                         reviewed=not self.headless)
             counts["synced"] = synced
 
-            self.state.mark_run_success()
+            # 중간에 멈췄다면 수집 구간을 앞으로 당기지 않는다.
+            # 당겨 버리면 아직 열어보지 못한 쪽지가 구간 밖으로 밀려나
+            # 영영 정리되지 않는다.
+            if self.stopped_early:
+                self.log.info("중간에 멈췄으므로 수집 구간을 그대로 둡니다 "
+                              "(못 읽은 쪽지는 다음에 다시 정리합니다)")
+            else:
+                self.state.mark_run_success()
             self.state.finish_run(run_id, "ok", **counts)
 
             if not self.headless:
@@ -272,6 +284,12 @@ class Runner:
                 if prog:
                     prog.step(i - 1, f"({i}/{len(fresh)}) {label}")
 
+                if self.should_stop and i > 1 and self.should_stop():
+                    self.log.info(f"선생님이 자리에 돌아오셔서 {i - 1}건까지만 정리했습니다. "
+                                  "나머지는 다음 기회에 다시 정리합니다.")
+                    self.stopped_early = True
+                    break
+
                 detail = None
                 if use_full and i <= limit:
                     detail = collector.open_and_read(note)
@@ -349,7 +367,8 @@ class Runner:
             col.attach()
             known = self.state.known_source_keys("goe")
             notes = col.collect(known_keys=known,
-                                max_rows=int(self.cfg.get("goe_max_rows", 25)))
+                                max_rows=int(self.cfg.get("goe_max_rows", 25)),
+                                should_stop=self.should_stop)
             ex = extractor_mod.build(self.cfg)
 
             for n in notes:
