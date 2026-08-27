@@ -369,6 +369,12 @@ class Runner:
             notes = col.collect(known_keys=known,
                                 max_rows=int(self.cfg.get("goe_max_rows", 25)),
                                 should_stop=self.should_stop)
+            # 훑으면서 본 줄 순서를 남긴다. GOE 목록은 읽을 수 없어서,
+            # 나중에 그 쪽지를 다시 띄울 때 어느 줄을 눌러야 하는지
+            # 알 수 있는 유일한 단서다 (reopen.py).
+            if getattr(col, "last_order", None):
+                import json as _json
+                self.state.set_meta("goe_rows", _json.dumps(col.last_order))
             ex = extractor_mod.build(self.cfg)
 
             for n in notes:

@@ -204,6 +204,8 @@ class GoeCollector:
         self.hwnd: Optional[int] = None
         self.list_hwnd: Optional[int] = None
         self._restore_minimized = False
+        # 마지막으로 훑을 때 '몇 번째 줄이 무슨 쪽지였는지' (collect 에서 채운다)
+        self.last_order: List[str] = []
 
     @staticmethod
     def init_thread():
@@ -341,12 +343,21 @@ class GoeCollector:
                 progress: Optional[Callable[[int, str], None]] = None,
                 should_stop: Optional[Callable[[], bool]] = None) -> List[GoeNote]:
         """
-        위에서부터 훑다가 이미 본 쪽지를 만나면 멈춘다.
-        받은 쪽지함은 최신순이므로 그 아래는 전부 이미 본 것이다.
+        위에서부터 훑다가 이미 본 쪽지를 **두 번 잇달아** 만나면 멈춘다.
+
+        한 번만에 멈추면 구멍이 생긴다. 수집이 중간에 끊긴 다음 실행에서는
+        맨 윗줄이 '이미 본 쪽지'라 곧바로 멈춰 버려, 그 아래에서 못 읽은
+        쪽지들이 영영 수집되지 않기 때문이다. 한 줄 더 보는 값으로 막는다.
+
+        훑으면서 '몇 번째 줄이 무슨 쪽지인지'를 self.last_order 에 남긴다.
+        목록을 읽을 수 없는 GOE 에서, 나중에 그 쪽지를 다시 띄울 때
+        어느 줄을 눌러야 하는지 아는 유일한 단서다(reopen.py).
         """
         l, t, r, b = win32gui.GetWindowRect(self.list_hwnd)
         out: List[GoeNote] = []
         seen_now: Set[str] = set()
+        self.last_order: List[str] = []
+        known_streak = 0
         misses = 0
 
         for row in range(max_rows):
@@ -379,10 +390,15 @@ class GoeCollector:
             if note.key in seen_now:
                 continue                      # 같은 창이 다시 잡힌 경우
             seen_now.add(note.key)
+            self.last_order.append(note.key)  # 몇 번째 줄이 무슨 쪽지였는지
 
             if note.key in known_keys:
-                self.log(f"  · 이미 본 쪽지를 만나 중단 ({row + 1}번째)")
-                break
+                known_streak += 1
+                if known_streak >= 2:
+                    self.log(f"  · 이미 본 쪽지가 이어져 중단 ({row + 1}번째)")
+                    break
+                continue
+            known_streak = 0
 
             out.append(note)
             self.log(f"  + GOE: {note.subject[:34]}")

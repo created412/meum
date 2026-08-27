@@ -148,6 +148,51 @@ class State:
         return self.con.execute(
             "SELECT 1 FROM messages WHERE msg_id=?", (msg_id,)).fetchone() is not None
 
+    def goe_list_order(self) -> list:
+        """
+        GOE 쪽지함에 지금 보일 순서(맨 위부터)를 되살린다.
+
+        GOE 목록은 직접 그리기라 읽을 수 없지만, 순서는 계산할 수 있다.
+
+          · 한 번의 수집은 목록 맨 위에서부터 아래로 훑는다
+            → 같은 회차 안에서는 '저장한 순서 = 목록 순서'
+          · 새 쪽지는 항상 위에 쌓인다
+            → 나중 회차가 앞선 회차보다 위
+
+        회차는 processed_at(저장 시각)이 붙어 있는 덩어리로 가른다.
+        저장에 몇 초 걸리기도 하므로 2분 이내면 같은 회차로 본다.
+
+        반환: msg_id 목록. 앞에 있을수록 목록 위쪽(= 최신).
+        """
+        rows = [dict(r) for r in self.con.execute(
+            "SELECT rowid AS rid, msg_id, processed_at FROM messages "
+            "WHERE source='goe' ORDER BY rowid ASC")]
+        if not rows:
+            return []
+
+        def when(r):
+            try:
+                return datetime.fromisoformat(r["processed_at"])
+            except Exception:
+                return None
+
+        runs, cur, prev = [], [], None
+        for r in rows:
+            t = when(r)
+            if cur and (t is None or prev is None
+                        or (t - prev).total_seconds() > 120):
+                runs.append(cur)
+                cur = []
+            cur.append(r["msg_id"])
+            prev = t or prev
+        if cur:
+            runs.append(cur)
+
+        out = []
+        for run in reversed(runs):      # 나중 회차가 위
+            out.extend(run)             # 회차 안에서는 저장 순서 그대로
+        return out
+
     def upsert_message(self, m: dict) -> None:
         self.con.execute(
             """INSERT INTO messages
