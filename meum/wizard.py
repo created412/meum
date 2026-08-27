@@ -68,7 +68,9 @@ class Wizard:
     def _show_report(self, text, path, copied, sent, sent_msg):
         """진단 보고서 창을 띄운다 (실제 화면은 doctor 가 만든다)."""
         from .doctor import show_report_window
-        show_report_window(text, path, copied, sent, sent_msg, parent=self.root)
+        show_report_window(text, path, copied, sent, sent_msg,
+                           parent=self.root,
+                           endpoint=self.cfg.get('report_endpoint', ''))
 
     def _build_frame(self):
         top = tk.Frame(self.root, bg=BG)
@@ -177,11 +179,12 @@ class Wizard:
                     from . import doctor
                     text = doctor.build_report()
                     path = doctor.save_report_text(text)
+                    # 보내는 것은 창의 큰 단추를 눌렀을 때 한다.
+                    # 남의 컴퓨터 정보를 묻지도 않고 내보내지 않기 위해서다.
+                    # (받을 주소가 없으면 그 단추가 '복사하기'가 된다)
                     copied = doctor.copy_to_clipboard(text)
-                    sent, sent_msg = doctor.send_report(
-                        text, self.cfg.get("report_endpoint", ""))
                     self.root.after(0, lambda: self._show_report(
-                        text, path, copied, sent, sent_msg))
+                        text, path, copied, False, ""))
                     self.root.after(0, lambda: result.configure(
                         text="진단 보고서를 만들었습니다.", fg=MUTED))
                 except Exception as e:

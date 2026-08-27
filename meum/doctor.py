@@ -340,6 +340,71 @@ def send_report(text: str, endpoint: str = "") -> tuple:
         return False, f"보내지 못했습니다({type(e).__name__}). 파일로 전달해 주세요."
 
 
+_ENTRY_RE = None
+
+
+def configure_endpoint(form_url: str, save: bool = True) -> tuple:
+    """
+    구글 폼 주소 하나만 주면 보낼 준비를 끝낸다.
+
+    폼에 글을 넣으려면 '어느 칸에 넣을지'를 가리키는 entry 번호가 필요한데,
+    그걸 찾으라고 하면 페이지 소스를 열어 눈으로 뒤져야 한다. 그 대신
+    폼 페이지를 한 번 읽어 번호를 직접 찾아낸다.
+
+    반환: (성공, 안내 문구, {"report_endpoint": ..., "report_field": ...})
+    """
+    import re
+    import urllib.request
+
+    url = (form_url or "").strip()
+    if not url:
+        return False, "폼 주소가 비어 있습니다.", {}
+    if "docs.google.com/forms" not in url:
+        return False, "구글 폼 주소가 아닙니다.", {}
+
+    view = re.sub(r"/(formResponse|viewform).*$", "/viewform", url)
+    post = re.sub(r"/(formResponse|viewform).*$", "/formResponse", url)
+    try:
+        req = urllib.request.Request(
+            view, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            html = r.read().decode("utf-8", "replace")
+    except Exception as e:
+        return False, f"폼 페이지를 열지 못했습니다: {e}", {}
+
+    field = _find_entry_id(html)
+    if not field:
+        return False, ("폼에서 입력 칸을 찾지 못했습니다.\n"
+                       "'장문형' 질문이 하나 있는 폼인지 확인해 주세요."), {}
+
+    cfg = {"report_endpoint": post, "report_field": field}
+    if save:
+        config.update(**cfg)
+    return True, f"보낼 준비가 되었습니다. (칸: {field})", cfg
+
+
+def _find_entry_id(html: str):
+    """폼 페이지에서 답을 넣을 칸의 entry 번호를 찾는다."""
+    import re
+
+    # 1) 가장 흔한 형태 — name="entry.123456789"
+    m = re.search(r'name="(entry\.\d+)"', html)
+    if m:
+        return m.group(1)
+    m = re.search(r'"(entry\.\d+)"', html)
+    if m:
+        return m.group(1)
+
+    # 2) 요즘 폼은 FB_PUBLIC_LOAD_DATA_ 안에 번호만 들어 있다.
+    #    질문 묶음이 [번호, "질문", ...] 꼴이라 첫 번째 큰 번호를 쓴다.
+    m = re.search(r"FB_PUBLIC_LOAD_DATA_\s*=\s*(.+?);\s*</script>", html, re.S)
+    if m:
+        nums = re.findall(r"\[(\d{6,}),", m.group(1))
+        if nums:
+            return f"entry.{nums[0]}"
+    return None
+
+
 def copy_to_clipboard(text: str) -> bool:
     """보고서를 클립보드에 담는다 — 카카오톡·메일에 바로 붙여넣도록."""
     try:
@@ -356,60 +421,76 @@ def copy_to_clipboard(text: str) -> bool:
 
 
 def show_report_window(text, path, copied=False, sent=False,
-                       sent_msg='', parent=None):
+                       sent_msg='', parent=None, endpoint=""):
     """
-    진단 보고서를 그 자리에서 보여 주고 곧바로 보낼 수 있게 한다.
+    진단 보고서를 보여 주고, **한 번 눌러 보내게** 한다.
 
-    연결이 안 되는 원인은 그 컴퓨터에서만 보인다. 파일을 찾아 첨부해
-    보내는 일까지 부탁드리면 대개 거기서 끊긴다. 그래서 만들자마자
-    **클립보드에 담아** 두고, 카카오톡·메일에 붙여넣기만 하면 되게 한다.
+    보내는 분은 컴퓨터가 어려우실 수 있다. 그래서 화면에 할 일을 하나만
+    남긴다 — 큰 단추 하나. 긴 보고서 내용은 접어 두고, 원하실 때만 편다.
+
+    받을 주소(report_endpoint)가 설정돼 있으면 그 단추가 '보내기'가 되고,
+    없으면 '복사하기'가 된다. 복사한 뒤 카카오톡에 붙여넣으면 된다.
     """
     win = tk.Toplevel(parent) if parent else tk.Tk()
     win.title(f"{APP_NAME} 진단 보고서")
     win.configure(bg=BG)
-    win.geometry("720x560")
     F = _fonts()          # 글꼴은 창이 생긴 뒤에야 만들 수 있다
+    to_name = config.load().get("report_to", "만든 사람")
 
     head = tk.Frame(win, bg=BG)
-    head.pack(fill="x", padx=18, pady=(16, 8))
-    tk.Label(head, text="진단 보고서가 준비되었습니다", font=F["title"],
-             bg=BG, fg=FG).pack(anchor="w")
+    head.pack(fill="x", padx=22, pady=(20, 4))
+    title_lbl = tk.Label(head, text="진단 결과가 준비되었습니다", font=F["title"],
+                         bg=BG, fg=FG)
+    title_lbl.pack(anchor="w")
+    guide = tk.Label(head, text="", font=F["body"], bg=BG, fg=MUTED,
+                     justify="left", wraplength=560)
+    guide.pack(anchor="w", pady=(8, 0))
 
-    if sent:
-        guide = "보고서를 보냈습니다. 이 창은 닫으셔도 됩니다."
-    elif copied:
-        guide = ("내용이 이미 복사되어 있습니다.\n"
-                 "카카오톡이나 메일 창에서 붙여넣기(Ctrl+V) 만 하시면 됩니다.")
-    else:
-        guide = "아래 '내용 복사'를 누른 뒤 카카오톡이나 메일에 붙여넣어 주세요."
-    tk.Label(head, text=guide, font=F["body"], bg=BG, fg=MUTED,
-             justify="left").pack(anchor="w", pady=(6, 0))
-    if sent_msg and not sent:
-        tk.Label(head, text=sent_msg, font=F["small"], bg=BG,
-                 fg=DANGER).pack(anchor="w", pady=(4, 0))
+    # 큰 단추 하나
+    act = tk.Frame(win, bg=BG)
+    act.pack(fill="x", padx=22, pady=(16, 4))
+    big = tk.Button(act, font=F["bold"], relief="flat", bg=ACCENT, fg="white",
+                    activebackground="#1e40af", activeforeground="white",
+                    cursor="hand2", padx=26, pady=12)
+    big.pack(anchor="w")
 
-    # 발치(단추)를 먼저 자리잡아 둔다.
-    # 본문 상자를 먼저 채우면 단추가 창 밖으로 밀려 보이지 않는다.
-    foot = tk.Frame(win, bg=BG)
-    foot.pack(side="bottom", fill="x", padx=18, pady=(0, 16))
+    note = tk.Label(win, text="쪽지 내용·제목·발신자는 들어 있지 않습니다.",
+                    font=F["small"], bg=BG, fg=MUTED)
+    note.pack(anchor="w", padx=22, pady=(10, 0))
 
-    box = tk.Frame(win, bg=BG)
-    box.pack(fill="both", expand=True, padx=18, pady=(6, 6))
-    sb = tk.Scrollbar(box)
+    # 접어 둔 본문
+    body = tk.Frame(win, bg=BG)
+    shown = {"open": False}
+
+    def toggle():
+        if shown["open"]:
+            body.pack_forget()
+            more.configure(text="▸ 보고서 내용 보기")
+            win.geometry("620x330")
+        else:
+            body.pack(fill="both", expand=True, padx=22, pady=(8, 0))
+            more.configure(text="▾ 내용 접기")
+            win.geometry("720x620")
+        shown["open"] = not shown["open"]
+
+    more = tk.Label(win, text="▸ 보고서 내용 보기", font=F["small"], bg=BG,
+                    fg=ACCENT, cursor="hand2")
+    more.pack(anchor="w", padx=22, pady=(12, 0))
+    more.bind("<Button-1>", lambda e: toggle())
+
+    sb = tk.Scrollbar(body)
     sb.pack(side="right", fill="y")
-    txt = tk.Text(box, font=("맑은 고딕", 9), wrap="none", bg="#ffffff",
-                  fg=FG, yscrollcommand=sb.set, relief="solid", bd=1)
+    txt = tk.Text(body, font=("맑은 고딕", 9), wrap="none", bg="#ffffff",
+                  fg=FG, yscrollcommand=sb.set, relief="solid", bd=1, height=12)
     txt.pack(fill="both", expand=True)
     sb.configure(command=txt.yview)
     txt.insert("1.0", text)
     txt.configure(state="disabled")
 
-    tk.Label(foot, text=f"저장 위치: {path}", font=F["small"],
-             bg=BG, fg=MUTED).pack(anchor="w", pady=(0, 8))
-
-    def copy_again():
-        copy_to_clipboard(text)
-        state.configure(text="복사했습니다. 붙여넣기(Ctrl+V) 하세요.", fg="#166534")
+    foot = tk.Frame(win, bg=BG)
+    foot.pack(side="bottom", fill="x", padx=22, pady=(10, 16))
+    tk.Label(foot, text=f"저장 위치: {path.name}", font=F["small"],
+             bg=BG, fg=MUTED).pack(side="left")
 
     def open_folder():
         import subprocess
@@ -418,20 +499,71 @@ def show_report_window(text, path, copied=False, sent=False,
         except Exception:
             pass
 
-    b1 = tk.Button(foot, text="내용 복사", font=F["bold"], relief="flat",
-                   bg=ACCENT, fg="white", activebackground="#1e40af",
-                   activeforeground="white", cursor="hand2", padx=16, pady=6,
-                   command=copy_again)
-    b1.pack(side="left")
-    tk.Button(foot, text="파일 위치 열기", font=F["bold"], relief="flat",
-              bg="#e2e8f0", fg=FG, cursor="hand2", padx=14, pady=6,
-              command=open_folder).pack(side="left", padx=(8, 0))
+    tk.Label(foot, text="파일 위치 열기", font=F["small"], bg=BG, fg=ACCENT,
+             cursor="hand2").pack(side="left", padx=(12, 0))
+    foot.winfo_children()[-1].bind("<Button-1>", lambda e: open_folder())
     tk.Button(foot, text="닫기", font=F["bold"], relief="flat",
-              bg="#e2e8f0", fg=FG, cursor="hand2", padx=14, pady=6,
+              bg="#e2e8f0", fg=FG, cursor="hand2", padx=16, pady=6,
               command=win.destroy).pack(side="right")
-    state = tk.Label(foot, text="쪽지 내용·제목·발신자는 들어 있지 않습니다.",
-                     font=F["small"], bg=BG, fg=MUTED)
-    state.pack(side="left", padx=(12, 0))
+
+    # ---- 상태에 따라 큰 단추의 역할이 바뀐다 ----
+    def as_done():
+        title_lbl.configure(text="보냈습니다")
+        guide.configure(text=f"{to_name}께 진단 결과가 전달되었습니다.\n"
+                             "이 창은 닫으셔도 됩니다.", fg="#166534")
+        big.configure(text="닫기", bg="#166534", activebackground="#14532d",
+                      command=win.destroy)
+
+    def do_send():
+        big.configure(state="disabled", text="보내는 중…")
+        win.update()
+        ok, msg = send_report(text, endpoint)
+        if ok:
+            as_done()
+        else:
+            copy_to_clipboard(text)
+            title_lbl.configure(text="보내지 못했습니다")
+            guide.configure(
+                text=(msg or "보내지 못했습니다.") +
+                     "\n내용을 복사해 두었습니다. 카카오톡 창에서 "
+                     "붙여넣기(Ctrl+V) 해 주세요.", fg=DANGER)
+            big.configure(state="normal", text="다시 복사하기", bg=ACCENT,
+                          command=do_copy)
+
+    def do_copy():
+        copy_to_clipboard(text)
+        title_lbl.configure(text="복사했습니다")
+        guide.configure(text=f"카카오톡에서 {to_name}께 붙여넣기(Ctrl+V) 해 주세요.",
+                        fg="#166534")
+        big.configure(text="다시 복사하기")
+
+    if sent:
+        as_done()
+    elif endpoint:
+        guide.configure(text=f"{to_name}께 보내면 원인을 찾아 고쳐 드릴 수 있습니다.")
+        big.configure(text=f"{to_name}께 보내기", command=do_send)
+    else:
+        if copied:
+            guide.configure(text="내용을 복사해 두었습니다.\n"
+                                 f"카카오톡에서 {to_name}께 "
+                                 "붙여넣기(Ctrl+V) 만 하시면 됩니다.")
+            big.configure(text="다시 복사하기", command=do_copy)
+        else:
+            guide.configure(text=f"복사한 뒤 카카오톡에서 {to_name}께 "
+                                 "붙여넣어 주세요.")
+            big.configure(text="내용 복사하기", command=do_copy)
+        if sent_msg:
+            guide.configure(text=guide.cget("text") + "\n" + sent_msg)
+
+    win.geometry("620x330")
+    try:
+        win.update_idletasks()
+        if parent is not None:
+            x = parent.winfo_rootx() + 40
+            y = parent.winfo_rooty() + 60
+            win.geometry(f"+{x}+{y}")
+    except Exception:
+        pass
 
     if parent is None:
         # 혼자 띄웠을 때는 창이 닫힐 때까지 기다린다
@@ -460,7 +592,8 @@ def run_doctor(show: bool = True) -> int:
 
     if show:
         try:
-            show_report_window(text, path, copied, sent, sent_msg)
+            show_report_window(text, path, copied, sent, sent_msg,
+                               endpoint=config.load().get('report_endpoint', ''))
         except Exception:
             try:
                 os.startfile(str(path))      # 창을 못 띄우면 메모장으로라도

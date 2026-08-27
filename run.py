@@ -12,6 +12,7 @@
     메움.exe --status        실행 이력 확인
     메움.exe --doctor        진단 보고서 만들기 (연결이 안 될 때)
     메움.exe --ensure-panel  패널이 꺼져 있으면 되살린다 (스케줄러가 부름)
+    메움.exe --set-report URL 진단 보고서를 받을 구글 폼 주소를 설정한다
     메움.exe --uninstall     자동 실행 등록만 해제
 """
 from __future__ import annotations
@@ -153,6 +154,8 @@ def main() -> int:
     p.add_argument("--calendar", action="store_true", help="달력 열기")
     p.add_argument("--ensure-panel", action="store_true",
                    help="메신저가 켜져 있는데 패널이 없으면 띄운다")
+    p.add_argument("--set-report", metavar="URL", default=None,
+                   help="진단 보고서를 받을 구글 폼 주소 (칸 번호는 알아서 찾는다)")
     args = p.parse_args()
 
     if args.calendar:
@@ -163,6 +166,14 @@ def main() -> int:
         from meum.widget import show
         show()
         return 0
+    if args.set_report:
+        from meum.doctor import configure_endpoint
+        ok, msg, cfg = configure_endpoint(args.set_report)
+        out(msg)
+        if ok:
+            out(f"  주소 : {cfg['report_endpoint']}")
+            out(f"  칸   : {cfg['report_field']}")
+        return 0 if ok else 1
     if args.ensure_panel:
         return cmd_ensure_panel()
     if args.doctor:

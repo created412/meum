@@ -46,6 +46,7 @@ DEFAULTS = {
     # 클립보드에 복사만 한다(카카오톡·메일에 붙여넣기).
     "report_endpoint": "",
     "report_field": "entry.1000001",
+    "report_to": "이재영 선생님",     # 보고서를 받을 사람 (화면 문구에 쓰인다)
 
     # --- 오늘 마감 알람 (깜빡함 방지) ---
     "alarm_enabled": True,
