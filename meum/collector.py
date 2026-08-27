@@ -163,6 +163,11 @@ def brity_windows() -> list:
                 _, pid = win32process.GetWindowThreadProcessId(h)
                 if pid not in pids:
                     return True
+            elif not _looks_like_main(win32gui.GetWindowText(h)):
+                # 브리티 프로세스를 못 찾은 경우에는 제목이라도 맞아야 한다.
+                # 그러지 않으면 Chrome·Electron 으로 만든 다른 프로그램의 창을
+                # 브리티로 착각한다(실측: 메뉴가 '파일/편집/보기'인 엉뚱한 창).
+                return True
             l, t, r, b = win32gui.GetWindowRect(h)
             w, ht = r - l, b - t
             if w < 200 or ht < 200:          # 풍선 도움말 따위는 거른다
@@ -215,6 +220,59 @@ def find_main_window(allow_hidden: bool = True) -> Optional[int]:
         untitled = [c for c in pool if not (c[1] or "").strip()]
         if untitled:
             return untitled[0][0]
+    return None
+
+
+def window_is_app(hwnd: int) -> bool:
+    """
+    이 창이 브리티 '본창'인가 — 제목이 아니라 **안에 든 것**으로 가린다.
+
+    브리티는 알림 팝업 창에도 'Brity Messenger' 라는 같은 제목을 붙인다.
+    그래서 제목만 보고 고르면, 본창을 닫아 트레이에 두신 분의 컴퓨터에서는
+    알림 창을 본창으로 착각해 '쪽지 목록을 찾지 못했습니다' 로 끝난다
+    (실제로 다른 선생님 PC 에서 이 증상이 나왔다. 그 창 안에는 '알림 끄기',
+    '항상 위' 단추만 있고 쪽지 목록이 없었다).
+
+    본창에는 쪽지 목록(ListControl)이나 '쪽지' 이동 단추가 반드시 있다.
+    """
+    try:
+        wake_accessibility(hwnd)
+        root = auto.ControlFromHandle(hwnd)
+        if root is None:
+            return False
+
+        hit = False
+        for x, _d in _walk(root, maxdepth=12):
+            try:
+                ct = x.ControlTypeName
+                nm = (x.Name or "").strip()
+            except Exception:
+                continue
+
+            # 알림 팝업에만 있는 것들 — 보이면 본창이 아니다
+            if ct == "ButtonControl" and nm in ("알림 끄기", "항상 위"):
+                return False
+
+            if ct == "ListControl":
+                hit = True
+            elif ct == "ButtonControl" and nm in ("쪽지", "로그인"):
+                # '로그인' 이면 로그인 화면이지만 그래도 본창이다.
+                # (로그인이 필요하다는 안내는 _assert_signed_in 이 따로 해 준다)
+                hit = True
+            elif ct == "TabItemControl" and nm in ("받은 쪽지함", "보낸 쪽지함"):
+                hit = True
+            elif ct == "GroupControl" and nm in ("GNB", "Top menu"):
+                hit = True
+        return hit
+    except Exception:
+        return False
+
+
+def find_app_window() -> Optional[int]:
+    """쪽지를 읽을 수 있는 진짜 본창을 고른다. 없으면 None."""
+    for h, _t, _v, _a in brity_windows():
+        if window_is_app(h):
+            return h
     return None
 
 
@@ -327,24 +385,50 @@ def find_brity_exe() -> Optional[Path]:
 
 
 def ensure_brity(launch: bool = True, timeout: float = 60.0) -> int:
-    """브리티 창 핸들을 확보한다. 없으면 실행하고 기다린다."""
-    h = find_main_window()
+    """
+    쪽지를 읽을 수 있는 브리티 본창을 확보한다.
+
+    브리티는 창을 닫아도 트레이에 남아 계속 돌아간다. 그 상태에서는
+    '본창'이 아예 없고 알림 팝업 창만 있는데, 제목이 본창과 똑같아서
+    예전에는 그 창을 붙잡고 '쪽지 목록을 찾지 못했습니다' 로 끝났다.
+
+    그래서 창의 **내용**으로 본창을 가리고(window_is_app), 본창이 없으면
+    실행 파일을 한 번 더 실행해 브리티에게 창을 열어 달라고 한다.
+    (브리티는 두 번 실행하면 새 창을 띄우는 대신 이미 떠 있는 자신의
+     창을 보여 준다 — 그래서 숨은 'Opener' 창을 갖고 있다)
+    """
+    h = find_app_window()
     if h:
         return h
+
+    running = brity_is_running()
     if not launch:
-        raise CollectorError("브리티 메신저 창을 찾을 수 없습니다.")
+        raise CollectorError(
+            "브리티 메신저 창이 열려 있지 않습니다."
+            if running else "브리티 메신저가 실행되고 있지 않습니다.")
+
     exe = find_brity_exe()
     if not exe:
-        raise CollectorError("브리티 메신저 실행 파일을 찾지 못했습니다.")
-    subprocess.Popen([str(exe)], close_fds=True)
+        raise CollectorError(
+            "브리티 메신저 실행 파일을 찾지 못했습니다.\n"
+            "브리티를 실행한 뒤 다시 시도해 주세요.")
+    try:
+        subprocess.Popen([str(exe)], close_fds=True)
+    except Exception as e:
+        raise CollectorError(f"브리티 메신저를 실행하지 못했습니다: {e}")
+
     deadline = time.time() + timeout
     while time.time() < deadline:
         time.sleep(2)
-        h = find_main_window()
+        h = find_app_window()
         if h:
             time.sleep(3)  # 로그인/렌더 대기
             return h
-    raise CollectorError("브리티 메신저를 실행했지만 창이 열리지 않았습니다.")
+    raise CollectorError(
+        "브리티 메신저 창을 열지 못했습니다.\n"
+        "브리티가 트레이(화면 오른쪽 아래 시계 옆)에 있다면 그 아이콘을 눌러\n"
+        "창을 띄워 두신 뒤 다시 시도해 주세요."
+        if running else "브리티 메신저를 실행했지만 창이 열리지 않았습니다.")
 
 
 # --------------------------------------------------------------------------

@@ -11,6 +11,7 @@
     메움.exe --list-only     목록만 읽기 (아무것도 바꾸지 않음)
     메움.exe --status        실행 이력 확인
     메움.exe --doctor        진단 보고서 만들기 (연결이 안 될 때)
+    메움.exe --ensure-panel  패널이 꺼져 있으면 되살린다 (스케줄러가 부름)
     메움.exe --uninstall     자동 실행 등록만 해제
 """
 from __future__ import annotations
@@ -23,8 +24,11 @@ if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from meum import config                      # noqa: E402
-from meum.app import Runner, setup_logging   # noqa: E402
-from meum.state import State                 # noqa: E402
+
+# Runner·State 는 여기서 불러오지 않는다.
+# 그것들을 따라가면 uiautomation(COM) 까지 통째로 올라와, 패널을 띄우는
+# 가벼운 일에도 몇 초가 걸린다. 구형 노트북에서 특히 크다.
+# 필요한 갈래에서만 불러온다.
 
 
 def out(*a):
@@ -39,6 +43,7 @@ def out(*a):
 
 def cmd_list_only() -> int:
     from meum.collector import BrityCollector
+    from meum.app import setup_logging
     cfg = config.load()
     log = setup_logging()
     c = BrityCollector(cfg, log=log.info)
@@ -60,6 +65,7 @@ def cmd_list_only() -> int:
 
 def cmd_status() -> int:
     from meum.calendar_sync import GoogleBackend
+    from meum.state import State
     cfg = config.load()
     st = State()
     lr = st.last_run_at
@@ -82,6 +88,52 @@ def cmd_status() -> int:
     return 0
 
 
+def cmd_ensure_panel() -> int:
+    """
+    메신저가 떠 있는데 메움 패널이 없으면 패널을 띄운다.
+
+    메움은 '패널이 곧 엔진'이라, 패널이 꺼져 있으면 쪽지 정리도 멈춘다.
+    로그온 자동 실행만으로는 부족했다 — 패널을 닫으셨거나 어떤 이유로
+    꺼진 뒤에는 다음 로그인까지 아무도 메신저를 지켜보지 않았다.
+    (실제로 '브리티를 켰는데 메움이 안 뜬다'는 일이 있었다)
+
+    그래서 작업 스케줄러가 이 명령을 주기적으로 부른다.
+    이미 패널이 떠 있으면 아무것도 하지 않고 곧바로 끝난다.
+    """
+    import win32gui
+
+    from meum import APP_NAME
+
+    title = f"{APP_NAME} 할 일"
+    found = []
+    win32gui.EnumWindows(
+        lambda h, _: (found.append(h)
+                      if win32gui.IsWindowVisible(h)
+                      and win32gui.GetWindowText(h) == title else None, True)[-1],
+        None)
+    if found:
+        out("패널이 이미 떠 있습니다.")
+        return 0
+
+    # 메신저가 하나도 없으면 굳이 띄우지 않는다 (퇴근 후 등)
+    from meum.watcher import scan_windows
+    snap = scan_windows()
+    if not (snap["brity"] or snap["goe"]):
+        out("메신저가 실행되어 있지 않아 그대로 둡니다.")
+        return 0
+
+    import subprocess
+    if getattr(sys, "frozen", False):
+        cmd = [sys.executable, "--widget"]
+    else:
+        cmd = [sys.executable, str(Path(__file__).resolve()), "--widget"]
+    subprocess.Popen(cmd, creationflags=0x00000008,          # DETACHED_PROCESS
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     stdin=subprocess.DEVNULL)
+    out("메신저가 켜져 있어 패널을 띄웠습니다.")
+    return 0
+
+
 def main() -> int:
     p = argparse.ArgumentParser(prog="메움",
                                 description="메움 — 메신저에서 놓친 선생님들의 업무를 메워드립니다")
@@ -99,6 +151,8 @@ def main() -> int:
     p.add_argument("--collect", action="store_true",
                    help="지금 쪽지를 정리한다 (확인 창을 띄움)")
     p.add_argument("--calendar", action="store_true", help="달력 열기")
+    p.add_argument("--ensure-panel", action="store_true",
+                   help="메신저가 켜져 있는데 패널이 없으면 띄운다")
     args = p.parse_args()
 
     if args.calendar:
@@ -109,6 +163,8 @@ def main() -> int:
         from meum.widget import show
         show()
         return 0
+    if args.ensure_panel:
+        return cmd_ensure_panel()
     if args.doctor:
         from meum.doctor import run_doctor
         return run_doctor()
@@ -142,6 +198,7 @@ def main() -> int:
     # 하루 두 번(아침·저녁) 돌므로 '오늘 이미 했나'가 아니라
     # '최근 90분 안에 했나'로 거른다 — 보충 실행이 겹치는 것만 막는다.
     if args.trigger in ("daily", "logon") and not args.force:
+        from meum.state import State
         st = State()
         recent = st.ran_successfully_within(90)
         st.close()
@@ -163,6 +220,7 @@ def main() -> int:
         from meum.watcher import user_is_back
         should_stop = user_is_back
 
+    from meum.app import Runner
     return Runner(trigger=args.trigger, headless=headless,
                   should_stop=should_stop).run()
 

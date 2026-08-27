@@ -379,6 +379,19 @@ class Widget:
         self.refresh()
         self._check_alarms()
         now = datetime.now()
+
+        # 메신저를 방금 켜셨다면 패널을 한 번 앞으로 올린다.
+        # '브리티를 켜면 메움도 보인다'가 이 프로그램의 약속이다.
+        if "켜졌습니다" in (reason or ""):
+            try:
+                self.root.deiconify()
+                self.root.lift()
+                if not self.cfg.get("widget_always_on_top", False):
+                    self.root.attributes("-topmost", True)
+                    self.root.after(1500,
+                                    lambda: self.root.attributes("-topmost", False))
+            except Exception:
+                pass
         if added and self.cfg.get("watch_toast", True):
             self._new_task_toast(added)
             self.status.configure(text=f"{now:%H:%M} 새 할 일 {added}건")

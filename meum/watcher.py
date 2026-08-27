@@ -208,6 +208,7 @@ class Watcher:
         self._known_goe: Optional[Set[int]] = None      # 첫 바퀴는 '이미 있던 것'으로 본다
         self._known_popups: Optional[Set[int]] = None
         self._brity_seen = False
+        self._goe_seen = False
         self._pending: Optional[str] = None             # 정리해야 할 이유 (대기 중)
         self._last_run: Optional[datetime] = None
         self._deferred_since: Optional[datetime] = None
@@ -302,16 +303,21 @@ class Watcher:
         popups = snap["brity_popups"]
         brity_up = snap["brity"] is not None
 
+        goe_up = snap["goe"] is not None
+
         # 첫 바퀴: 지금 떠 있는 것들은 '새 쪽지'가 아니라 원래 있던 것으로 본다
         if self._known_goe is None:
             self._known_goe = set(goe_notes)
             self._known_popups = set(popups)
             self._brity_seen = brity_up
-            return "첫 점검" if brity_up or snap["goe"] else None
+            self._goe_seen = goe_up
+            return "첫 점검" if brity_up or goe_up else None
 
         reason = None
         if brity_up and not self._brity_seen:
             reason = "브리티가 켜졌습니다"
+        elif goe_up and not self._goe_seen:
+            reason = "GOE메신저가 켜졌습니다"
         elif goe_notes - self._known_goe:
             reason = "GOE 쪽지가 새로 왔습니다"
         elif popups - self._known_popups:
@@ -320,10 +326,11 @@ class Watcher:
         self._known_goe = set(goe_notes)
         self._known_popups = set(popups)
         self._brity_seen = brity_up
+        self._goe_seen = goe_up
 
         if reason:
             return reason
-        if not (brity_up or snap["goe"]):
+        if not (brity_up or goe_up):
             return None                                   # 메신저가 다 꺼져 있다
 
         since = self._minutes_since_run()

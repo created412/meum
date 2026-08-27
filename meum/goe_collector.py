@@ -24,6 +24,7 @@ GOE메신저는 Electron 이 아니라 MFC 네이티브 앱이고, 목록을 직
 """
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import re
 import subprocess
@@ -43,7 +44,14 @@ NOTE_CLASS = "@Messenger7_Wnd"
 LIST_CLASS = "UltariListScrollView"
 MAIN_TITLE = "GOE메신저"
 
-ROW_H = 66                # 실측한 행 높이
+# 목록 한 줄의 높이와 머리 여백. 화면 배율 100%(96dpi) 기준으로 실측한 값이며,
+# 실제 클릭할 때는 그 창이 그려지는 배율에 맞춰 늘려 쓴다(row_metrics).
+# 이 값을 그대로 쓰면 배율이 다른 컴퓨터에서 몇 줄만 내려가도 한 줄씩 어긋난다.
+ROW_H_96 = 66
+TOP_PAD_96 = 30
+BOTTOM_PAD_96 = 10
+
+ROW_H = ROW_H_96          # (옛 이름 — 96dpi 기준값)
 MAX_ROWS = 40             # 한 번에 훑어볼 최대 행 수
 OPEN_TIMEOUT = 6.0
 
@@ -94,11 +102,20 @@ class GoeNote:
 
 
 # --------------------------------------------------------------------------
+def _is_note_class(cls: str) -> bool:
+    """쪽지 창의 클래스인가. 버전이 바뀌어 숫자가 달라져도 걸리게 한다."""
+    return bool(cls) and cls.startswith("@Messenger") and cls.endswith("_Wnd")
+
+
+def _is_main_class(cls: str) -> bool:
+    return bool(cls) and cls.startswith("@Messenger") and cls.endswith("_MainWnd")
+
+
 def _visible_notes() -> Set[int]:
     out = set()
 
     def cb(h, _):
-        if win32gui.IsWindowVisible(h) and win32gui.GetClassName(h) == NOTE_CLASS:
+        if win32gui.IsWindowVisible(h) and _is_note_class(win32gui.GetClassName(h)):
             out.add(h)
         return True
 
@@ -107,25 +124,39 @@ def _visible_notes() -> Set[int]:
 
 
 def find_main() -> Optional[int]:
-    found = []
+    exact, loose = [], []
 
     def cb(h, _):
-        if win32gui.GetClassName(h) == MAIN_CLASS:
-            found.append(h)
+        cls = win32gui.GetClassName(h)
+        if cls == MAIN_CLASS:
+            exact.append(h)
+        elif _is_main_class(cls):
+            loose.append(h)
         return True
 
     win32gui.EnumWindows(cb, None)
-    return found[0] if found else None
+    return (exact or loose or [None])[0]
 
 
 def is_running() -> bool:
+    """
+    GOE메신저가 떠 있는가.
+
+    실행 파일 이름(AtMessengerMobileEdition.exe)만 보고 판단하면 버전이
+    다른 학교에서 '없다'고 오판한다. 창이 있으면 그게 가장 확실한 증거다.
+    """
+    if find_main() is not None:
+        return True
     try:
-        out = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq AtMessengerMobileEdition.exe"],
-            capture_output=True, text=True, errors="ignore").stdout
-        return "AtMessengerMobileEdition" in out
+        out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"],
+                             capture_output=True, text=True, errors="ignore").stdout
+        for line in out.splitlines():
+            name = line.split('","')[0].strip('"').lower()
+            if "atmessenger" in name:
+                return True
     except Exception:
-        return False
+        pass
+    return False
 
 
 def normalize(body: str) -> str:
@@ -236,7 +267,9 @@ class GoeCollector:
         cands = []
 
         def cb(h, _):
-            if win32gui.GetClassName(h) != LIST_CLASS:
+            cls = win32gui.GetClassName(h) or ""
+            # 정확한 이름이 아니어도 'UltariList' 계열이면 받아들인다
+            if cls != LIST_CLASS and "ultarilist" not in cls.lower():
                 return True
             if not win32gui.IsWindowVisible(h):
                 return True
@@ -294,13 +327,51 @@ class GoeCollector:
         except Exception:
             pass
 
+    def row_metrics(self) -> tuple:
+        """
+        목록 한 줄의 크기를 **그 창의 좌표계에서** 계산한다.
+
+        (머리 여백, 줄 높이, 클릭할 수 있는 줄 수)
+
+        예전에는 화면 좌표로 '66픽셀마다 한 줄'이라고 못 박아 두었다.
+        그 값은 이 컴퓨터에서 잰 것이라, 화면 배율이 다른 컴퓨터에서는
+        몇 줄만 내려가도 한 줄씩 어긋나 엉뚱한 쪽지를 열게 된다.
+        창이 실제로 그려지는 배율(GetDpiForWindow)에 맞춰 늘려 쓴다.
+        """
+        dpi = 96
+        try:
+            dpi = ctypes.windll.user32.GetDpiForWindow(self.list_hwnd) or 96
+        except Exception:
+            pass
+        scale = dpi / 96.0
+        pitch = max(1, round(ROW_H_96 * scale))
+        top = round(TOP_PAD_96 * scale)
+        bottom = round(BOTTOM_PAD_96 * scale)
+        try:
+            _, _, cw, ch = win32gui.GetClientRect(self.list_hwnd)
+        except Exception:
+            cw = ch = 0
+        rows = max(1, (ch - top - bottom) // pitch + 1) if ch else 1
+        return top, pitch, rows, cw, ch
+
+    def click_row_index(self, row: int) -> bool:
+        """몇 번째 줄을 누른다 (화면 좌표를 거치지 않는다)."""
+        top, pitch, rows, cw, ch = self.row_metrics()
+        if row < 0 or row >= rows:
+            return False
+        return self._click_client(cw // 2 if cw else 100, top + row * pitch)
+
     def _click_row(self, y: int) -> bool:
+        """화면 좌표 y 를 눌렀던 옛 방식 (남겨 두되 안에서 변환한다)."""
         l, t, r, b = win32gui.GetWindowRect(self.list_hwnd)
         sx = l + (r - l) // 2
         try:
             lx, ly = win32gui.ScreenToClient(self.list_hwnd, (sx, y))
         except Exception:
             return False
+        return self._click_client(lx, ly)
+
+    def _click_client(self, lx: int, ly: int) -> bool:
         lp = win32api.MAKELONG(lx, ly)
         for msg, wp in ((win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON),
                         (win32con.WM_LBUTTONUP, 0),

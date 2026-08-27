@@ -65,6 +65,11 @@ class Wizard:
         _center(self.root, 660, 560)
 
     # ------------------------------------------------------------------
+    def _show_report(self, text, path, copied, sent, sent_msg):
+        """진단 보고서 창을 띄운다 (실제 화면은 doctor 가 만든다)."""
+        from .doctor import show_report_window
+        show_report_window(text, path, copied, sent, sent_msg, parent=self.root)
+
     def _build_frame(self):
         top = tk.Frame(self.root, bg=BG)
         top.pack(fill="x", padx=24, pady=(20, 0))
@@ -169,20 +174,19 @@ class Wizard:
 
             def work():
                 try:
-                    from .doctor import save_report
-                    path = save_report()
-                    msg = ("진단 보고서를 바탕화면에 저장했습니다.\n"
-                           f"  {path.name}\n\n"
-                           "이 파일을 만든 사람에게 보내 주시면 원인을 찾을 수 있습니다.\n"
-                           "(쪽지 내용·제목·발신자는 들어 있지 않습니다)")
-                    import os
-                    try:
-                        os.startfile(str(path))
-                    except Exception:
-                        pass
+                    from . import doctor
+                    text = doctor.build_report()
+                    path = doctor.save_report_text(text)
+                    copied = doctor.copy_to_clipboard(text)
+                    sent, sent_msg = doctor.send_report(
+                        text, self.cfg.get("report_endpoint", ""))
+                    self.root.after(0, lambda: self._show_report(
+                        text, path, copied, sent, sent_msg))
+                    self.root.after(0, lambda: result.configure(
+                        text="진단 보고서를 만들었습니다.", fg=MUTED))
                 except Exception as e:
-                    msg = f"진단 보고서를 만들지 못했습니다.\n{e}"
-                self.root.after(0, lambda: result.configure(text=msg, fg=MUTED))
+                    self.root.after(0, lambda: result.configure(
+                        text=f"진단 보고서를 만들지 못했습니다.\n{e}", fg=DANGER))
 
             threading.Thread(target=work, daemon=True).start()
 
@@ -389,9 +393,12 @@ Write-Output 'OK'
         if "OK" in (r.stdout or ""):
             wok = register_widget_autostart()
             sok = create_desktop_shortcuts()
+            gok = register_panel_guard()
             extra = ""
             if wok:
                 extra += "\n로그인하면 바탕화면 패널도 저절로 뜹니다."
+            if gok:
+                extra += "\n메신저를 켜면 패널이 꺼져 있어도 곧 다시 뜹니다."
             if sok:
                 extra += "\n바탕화면에 바로가기를 만들어 두었습니다."
             return True, (f"등록되었습니다. 매일 {run_time} · {lunch_time} 두 번 "
@@ -408,6 +415,54 @@ Write-Output 'OK'
         return False, f"등록하지 못했습니다.\n{err[:200]}"
     except Exception as e:
         return False, f"등록 실패: {e}"
+
+
+def register_panel_guard(every_min: int = 10) -> bool:
+    """
+    '메신저를 켜면 메움도 켜지게' 하는 지킴이 작업을 등록한다.
+
+    메움은 패널이 곧 엔진이라, 패널이 꺼져 있으면 쪽지 정리가 멈춘다.
+    로그온 자동 실행만으로는 부족했다 — 한 번 꺼지면 다음 로그인까지
+    아무도 메신저를 지켜보지 않아, '브리티를 켰는데 메움이 안 뜬다'는
+    일이 실제로 있었다.
+
+    그래서 10분마다 한 번씩 `--ensure-panel` 을 부른다. 패널이 이미 떠
+    있으면 곧바로 끝나므로(실측 0.7초) 구형 노트북에도 부담이 없다.
+
+    로그온 트리거는 여기 달지 않는다 — 관리자 권한이 없으면 등록 자체가
+    '액세스 거부'로 실패한다(실측). 로그온 자동 실행은 HKCU Run 이 맡는다.
+    """
+    exe = sys.executable
+    if getattr(sys, "frozen", False):
+        cmd = f'"{exe}" --ensure-panel'
+    else:
+        runpy = app_root() / "run.py"
+        pyw = Path(exe).with_name("pythonw.exe")
+        py = str(pyw if pyw.exists() else exe)
+        cmd = f'"{py}" "{runpy}" --ensure-panel'
+    exe_path, exe_args = _split_cmd(cmd)
+
+    ps = f"""
+$ErrorActionPreference = 'Stop'
+try {{ Unregister-ScheduledTask -TaskName 'PanelGuard' -TaskPath '\\메움\\' -Confirm:$false }} catch {{}}
+$action = New-ScheduledTaskAction -Execute {_ps_quote(exe_path)} -Argument {_ps_quote(exe_args)} -WorkingDirectory {_ps_quote(str(app_root()))}
+$t = New-ScheduledTaskTrigger -Once -At (Get-Date).Date -RepetitionInterval (New-TimeSpan -Minutes {every_min})
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries `
+    -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
+    -MultipleInstances IgnoreNew -StartWhenAvailable
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive
+Register-ScheduledTask -TaskName 'PanelGuard' -TaskPath '\\메움\\' -Action $action `
+    -Trigger $t -Settings $settings -Principal $principal `
+    -Description '메신저가 켜져 있는데 메움 패널이 없으면 다시 띄웁니다.' | Out-Null
+Write-Output 'OK'
+"""
+    try:
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+            capture_output=True, text=True, errors="ignore", timeout=90)
+        return "OK" in (r.stdout or "")
+    except Exception:
+        return False
 
 
 def create_desktop_shortcuts() -> bool:
@@ -512,7 +567,7 @@ def _ps_quote(s: str) -> str:
 
 
 def unregister_task() -> None:
-    for tn in ("메움\\DailyBrief", "메움\\LogonCatchUp"):
+    for tn in ("메움\\DailyBrief", "메움\\LogonCatchUp", "메움\\PanelGuard"):
         subprocess.run(["schtasks", "/Delete", "/TN", tn, "/F"],
                        capture_output=True, text=True)
     unregister_widget_autostart()

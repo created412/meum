@@ -85,6 +85,17 @@ w._last_run = datetime.now()
 check("브리티가 켜지면 정리한다", w._signal(snap()), "브리티가 켜졌습니다")
 
 w = make()
+w._signal(snap(goe=False))
+w._last_run = datetime.now()
+check("GOE메신저가 켜지면 정리한다", w._signal(snap()), "GOE메신저가 켜졌습니다")
+
+w = make()
+w._signal(snap(brity=False, goe=False))
+w._last_run = datetime.now()
+truthy("메신저가 켜지면 무엇이든 반응한다",
+       bool(w._signal(snap())), True)
+
+w = make()
 w._signal(snap())
 w._last_run = datetime.now()
 check("브리티 알림 창이 뜨면 정리한다",
