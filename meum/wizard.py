@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import subprocess
 import sys
@@ -539,9 +540,53 @@ def register_widget_autostart() -> bool:
                              0, winreg.KEY_SET_VALUE)
         winreg.SetValueEx(key, "메움", 0, winreg.REG_SZ, cmd)
         winreg.CloseKey(key)
+        register_startup_shortcut()      # 두 번째 자물쇠
+        return True
+    except Exception:
+        return register_startup_shortcut()
+
+
+def register_startup_shortcut() -> bool:
+    """
+    '시작프로그램' 폴더에도 바로가기를 둔다.
+
+    레지스트리 Run 키 하나만 믿을 수 없다. 학교 PC 는 정책으로 그 키를
+    비우거나, 윈도우 '시작 앱' 화면에서 꺼 두는 일이 있다. 두 곳에 걸어 두면
+    한쪽이 막혀도 아침에 패널이 뜬다.
+    (둘 다 살아 있어도 패널은 하나만 뜬다 — widget.already_running 이 막는다)
+    """
+    try:
+        import win32com.client
+        startup = (Path(os.environ.get("APPDATA", ""))
+                   / r"Microsoft\Windows\Start Menu\Programs\Startup")
+        if not startup.exists():
+            return False
+        sh = win32com.client.Dispatch("WScript.Shell")
+        lnk = sh.CreateShortcut(str(startup / f"{APP_NAME}.lnk"))
+        if getattr(sys, "frozen", False):
+            lnk.TargetPath = sys.executable
+            lnk.Arguments = "--widget"
+        else:
+            pyw = Path(sys.executable).with_name("pythonw.exe")
+            lnk.TargetPath = str(pyw if pyw.exists() else sys.executable)
+            lnk.Arguments = f'"{app_root() / "run.py"}" --widget'
+        lnk.WorkingDirectory = str(app_root())
+        lnk.Description = f"{APP_NAME} — 놓친 업무를 메워드립니다"
+        lnk.Save()
         return True
     except Exception:
         return False
+
+
+def unregister_startup_shortcut() -> None:
+    try:
+        p = (Path(os.environ.get("APPDATA", ""))
+             / r"Microsoft\Windows\Start Menu\Programs\Startup"
+             / f"{APP_NAME}.lnk")
+        if p.exists():
+            p.unlink()
+    except Exception:
+        pass
 
 
 def unregister_widget_autostart() -> None:
@@ -554,6 +599,7 @@ def unregister_widget_autostart() -> None:
         winreg.CloseKey(key)
     except Exception:
         pass
+    unregister_startup_shortcut()
 
 
 def _split_cmd(cmd: str) -> tuple:

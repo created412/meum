@@ -328,7 +328,17 @@ def send_report(text: str, endpoint: str = "") -> tuple:
     try:
         import urllib.parse
         import urllib.request
-        field = config.load().get("report_field", "entry.1000001")
+
+        # 어느 칸에 넣을지는 '그 주소와 짝이 맞는' 값을 써야 한다.
+        # 예전에 저장된 config.json 의 값이 새 기본값을 덮어써서, 바뀐 폼에
+        # 엉뚱한 칸으로 보내지는 일이 있었다(실측). 기본 주소로 보낼 때는
+        # 기본 칸을 쓰고, 직접 지정한 주소일 때만 저장된 값을 쓴다.
+        if endpoint == config.DEFAULTS.get("report_endpoint"):
+            field = config.DEFAULTS.get("report_field", "")
+        else:
+            field = config.load().get("report_field", "")
+        if not field:
+            return False, "보낼 칸이 정해져 있지 않습니다."
         data = urllib.parse.urlencode({field: text[:60000]}).encode("utf-8")
         req = urllib.request.Request(
             endpoint, data=data,
@@ -405,6 +415,43 @@ def _find_entry_id(html: str):
     return None
 
 
+def _fit(win, parent=None) -> None:
+    """
+    창을 내용에 맞춘다 — 화면 배율까지 셈에 넣는다.
+
+    설치본(exe)에서는 Tk 가 계산한 '필요한 크기'가 실제로 그려지는 크기보다
+    작게 나온다. 글꼴 크기가 배율이 적용되기 전 기준으로 잡히기 때문이다.
+    (실측: 소스로는 510x330 인 같은 창이 설치본에서 422x282 로 나와
+     오른쪽 글자와 아래쪽 단추가 잘렸다)
+
+    그래서 화면 배율만큼 늘려 준다. 조금 넉넉한 것은 흠이 아니지만,
+    잘려서 단추가 보이지 않는 것은 쓸 수 없는 화면이 된다.
+    """
+    try:
+        win.update_idletasks()
+        w, h = win.winfo_reqwidth(), win.winfo_reqheight()
+        scale = 1.0
+        try:
+            import ctypes
+            dpi = ctypes.windll.user32.GetDpiForWindow(win.winfo_id())
+            if dpi:
+                scale = max(1.0, dpi / 96.0)
+        except Exception:
+            pass
+        w = int(w * scale) + 24
+        h = int(h * scale) + 24
+        win.geometry(f"{w}x{h}")
+        win.minsize(min(w, 520), min(h, 300))
+        if parent is not None:
+            win.geometry(f"{w}x{h}+{parent.winfo_rootx() + 40}"
+                         f"+{parent.winfo_rooty() + 60}")
+    except Exception:
+        try:
+            win.geometry("760x430")
+        except Exception:
+            pass
+
+
 def copy_to_clipboard(text: str) -> bool:
     """보고서를 클립보드에 담는다 — 카카오톡·메일에 바로 붙여넣도록."""
     try:
@@ -446,13 +493,18 @@ def show_report_window(text, path, copied=False, sent=False,
                      justify="left", wraplength=560)
     guide.pack(anchor="w", pady=(8, 0))
 
-    # 큰 단추 하나
+    # 큰 단추 하나. '닫기'도 같은 줄에 둔다.
+    # 창 크기는 화면 배율에 따라 예상보다 작게 잡히는 컴퓨터가 있어(실측),
+    # 꼭 필요한 단추를 아래쪽에 두면 잘려서 보이지 않는다.
     act = tk.Frame(win, bg=BG)
     act.pack(fill="x", padx=22, pady=(16, 4))
     big = tk.Button(act, font=F["bold"], relief="flat", bg=ACCENT, fg="white",
                     activebackground="#1e40af", activeforeground="white",
                     cursor="hand2", padx=26, pady=12)
-    big.pack(anchor="w")
+    big.pack(side="left")
+    tk.Button(act, text="닫기", font=F["bold"], relief="flat",
+              bg="#e2e8f0", fg=FG, cursor="hand2", padx=16, pady=12,
+              command=lambda: win.destroy()).pack(side="right")
 
     note = tk.Label(win, text="쪽지 내용·제목·발신자는 들어 있지 않습니다.",
                     font=F["small"], bg=BG, fg=MUTED)
@@ -460,18 +512,18 @@ def show_report_window(text, path, copied=False, sent=False,
 
     # 접어 둔 본문
     body = tk.Frame(win, bg=BG)
-    shown = {"open": False}
+    shown = {"open": False, "w": 620, "h": 360}
 
     def toggle():
         if shown["open"]:
             body.pack_forget()
             more.configure(text="▸ 보고서 내용 보기")
-            win.geometry("620x330")
         else:
             body.pack(fill="both", expand=True, padx=22, pady=(8, 0))
             more.configure(text="▾ 내용 접기")
-            win.geometry("720x620")
         shown["open"] = not shown["open"]
+        win.geometry("")      # 잠깐 풀었다가
+        _fit(win)             # 배율까지 셈에 넣어 다시 맞춘다
 
     more = tk.Label(win, text="▸ 보고서 내용 보기", font=F["small"], bg=BG,
                     fg=ACCENT, cursor="hand2")
@@ -502,9 +554,6 @@ def show_report_window(text, path, copied=False, sent=False,
     tk.Label(foot, text="파일 위치 열기", font=F["small"], bg=BG, fg=ACCENT,
              cursor="hand2").pack(side="left", padx=(12, 0))
     foot.winfo_children()[-1].bind("<Button-1>", lambda e: open_folder())
-    tk.Button(foot, text="닫기", font=F["bold"], relief="flat",
-              bg="#e2e8f0", fg=FG, cursor="hand2", padx=16, pady=6,
-              command=win.destroy).pack(side="right")
 
     # ---- 상태에 따라 큰 단추의 역할이 바뀐다 ----
     def as_done():
@@ -555,15 +604,7 @@ def show_report_window(text, path, copied=False, sent=False,
         if sent_msg:
             guide.configure(text=guide.cget("text") + "\n" + sent_msg)
 
-    win.geometry("620x330")
-    try:
-        win.update_idletasks()
-        if parent is not None:
-            x = parent.winfo_rootx() + 40
-            y = parent.winfo_rooty() + 60
-            win.geometry(f"+{x}+{y}")
-    except Exception:
-        pass
+    _fit(win, parent)
 
     if parent is None:
         # 혼자 띄웠을 때는 창이 닫힐 때까지 기다린다
@@ -579,10 +620,15 @@ def run_doctor(show: bool = True) -> int:
     파일을 찾아 첨부해 보내는 일까지 부탁드리면 거기서 끊긴다.
     그래서 만들자마자 클립보드에 담고, 창에서 바로 붙여넣을 수 있게 한다.
     """
+    from .ui import _dpi_aware
+    _dpi_aware()          # 이걸 빼면 화면 배율이 다른 컴퓨터에서 창이 잘린다
+
     text = build_report()
     path = save_report_text(text)
     copied = copy_to_clipboard(text)
-    sent, sent_msg = send_report(text, config.load().get("report_endpoint", ""))
+    # 보내는 것은 창의 단추를 눌렀을 때만 한다.
+    # 남의 컴퓨터 정보를 묻지도 않고 내보내지 않기 위해서다.
+    sent, sent_msg = False, ""
 
     if sys.stdout is not None:
         try:

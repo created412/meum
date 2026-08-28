@@ -85,6 +85,41 @@ def _work_area():
         return 0, 0, 1920, 1040
 
 
+def _screen_bounds():
+    """지금 연결된 화면 전체가 차지하는 범위(가상 화면). 실패하면 작업 영역."""
+    try:
+        import ctypes
+        u = ctypes.windll.user32
+        vl, vt = u.GetSystemMetrics(76), u.GetSystemMetrics(77)
+        return vl, vt, vl + u.GetSystemMetrics(78), vt + u.GetSystemMetrics(79)
+    except Exception:
+        return _work_area()
+
+
+def clamp_to_screen(x, y, w, bounds, default, margin: int = 80):
+    """
+    저장해 둔 패널 자리를 지금 화면에 맞게 바로잡는다.
+
+    화면 구성이 바뀌면(모니터를 빼거나, 부팅 직후 두 번째 화면이 아직 잡히지
+    않았을 때) 예전 자리는 화면 밖이 된다. 그러면 패널이 떠 있어도 보이지
+    않아 '자동 실행이 안 된다'로 보인다. 실제로 저장된 x 가 4409 인데 화면은
+    0~3840 인 경우가 있었다.
+
+    반환: (x, y, 자리를 옮겼는가)
+    """
+    vl, vt, vr, vb = bounds
+    if x is None or y is None:
+        return int(default[0]), int(default[1]), True
+    x, y = int(x), int(y)
+    off = (x + w <= vl + margin or x >= vr - margin
+           or y >= vb - margin or y + margin <= vt)
+    if off:
+        return int(default[0]), int(default[1]), True
+    nx = min(max(x, vl), vr - w)
+    ny = min(max(y, vt), vb - margin)
+    return int(nx), int(ny), (nx != x or ny != y)
+
+
 def _fmt_day(d: date, today: date) -> Tuple[str, str, str]:
     """(머리글, D-day 표시, 색) 반환."""
     diff = (d - today).days
@@ -274,13 +309,23 @@ class Widget:
         self._stamp = ""
 
     def _place(self):
+        """
+        패널을 화면에 놓는다 — **반드시 보이는 자리에** 놓는다.
+
+        예전에는 저장해 둔 좌표를 검사 없이 그대로 썼다. 그래서 화면 구성이
+        바뀌면(모니터를 빼거나, 부팅 직후 두 번째 화면이 아직 안 잡혔을 때)
+        패널이 화면 밖에 떠서 '자동 실행이 안 된다'로 보였다.
+        실제로 저장된 좌표가 x=4409 인데 화면은 0~3840 인 경우가 있었다.
+        """
         l, t, r, b = _work_area()
         w = int(self.cfg.get("widget_width", 380))
-        x, y = self.cfg.get("widget_x"), self.cfg.get("widget_y")
         h = b - t
-        if x is None or y is None:
-            x, y = r - w, t
-        self.root.geometry(f"{w}x{h}+{int(x)}+{int(y)}")
+        x, y = self.cfg.get("widget_x"), self.cfg.get("widget_y")
+
+        nx, ny, moved = clamp_to_screen(x, y, w, _screen_bounds(), (r - w, t))
+        if moved and (x is not None or y is not None):
+            self.cfg = config.update(widget_x=nx, widget_y=ny)
+        self.root.geometry(f"{w}x{h}+{nx}+{ny}")
 
     def _set_view(self, key: str):
         # 패널은 자기가 바꾼 항목만 저장한다.
