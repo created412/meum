@@ -25,6 +25,8 @@ from typing import Dict, List, Optional, Tuple
 
 import calendar as pycal
 
+import win32gui
+
 from . import APP_NAME, APP_TAGLINE_SHORT, WINDOW_PANEL, config
 from .state import State
 
@@ -159,7 +161,7 @@ class Widget:
         self.root.title(WINDOW_TITLE)
         self.root.configure(bg=PAGE_BG)
         self.root.overrideredirect(True)
-        self.root.attributes("-topmost", bool(self.cfg.get("widget_always_on_top", False)))
+        self.root.attributes("-topmost", bool(self.cfg.get("widget_always_on_top", True)))
 
         self.f = {
             "brand": tkfont.Font(family="맑은 고딕", size=9, weight="bold"),
@@ -189,6 +191,7 @@ class Widget:
         self._alarm_win = None
         self._build()
         self._place()
+        self._show_in_taskbar()
         self.refresh()
         self.root.after(8000, self._check_alarms)   # 켜지고 잠시 뒤 첫 점검
         self.root.after(REFRESH_MS, self._tick)
@@ -376,8 +379,67 @@ class Widget:
             pass
         self.root.destroy()
 
+    def _hwnd(self):
+        """
+        이 패널의 **진짜 최상위 창** 핸들.
+
+        tkinter 의 winfo_id() 는 최상위 창이 아니라 그 안의 자식 창을
+        돌려준다(실측: winfo_id 71134, 최상위 71136). 창 스타일을 바꿀 때
+        이걸 모르면 엉뚱한 창에 걸어 놓고 '왜 안 되지' 하게 된다.
+        """
+        try:
+            import ctypes
+            hid = self.root.winfo_id()
+            return ctypes.windll.user32.GetAncestor(hid, 2) or hid   # GA_ROOT
+        except Exception:
+            return self.root.winfo_id()
+
+    def _show_in_taskbar(self):
+        """
+        작업표시줄에 단추를 만든다.
+
+        패널은 테두리 없는 창(overrideredirect)이라 윈도우가 '도구 창'으로
+        보고 작업표시줄에 올리지 않는다. 그래서 다른 창이 한 번 덮으면
+        **다시 불러올 방법이 없어** 사라진 것처럼 보인다.
+        (실제로 화면보호기를 풀었더니 안 보인다는 일이 있었다.
+         그때도 창은 살아 있었고 그저 가려져 있었다)
+
+        스타일을 바꾸려면 창을 잠깐 숨겼다 다시 보여야 한다.
+        """
+        try:
+            import win32con
+            self.root.update_idletasks()
+            hwnd = self._hwnd()
+            ex = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            ex = (ex & ~win32con.WS_EX_TOOLWINDOW) | win32con.WS_EX_APPWINDOW
+            win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex)
+            win32gui.ShowWindow(hwnd, win32con.SW_SHOWNA)
+        except Exception:
+            pass
+
+    def _keep_visible(self):
+        """
+        '항상 위'로 해 두었으면 그 상태를 지킨다.
+
+        화면 잠금·화면보호기를 풀거나 다른 프로그램이 전체화면을 썼다가
+        빠져나오면 윈도우가 이 표시를 슬쩍 풀어 버리는 일이 있다.
+        그러면 패널이 가려지고, 작업표시줄 단추가 없던 예전에는
+        되돌릴 길이 없었다.
+        """
+        if not self.cfg.get("widget_always_on_top", True):
+            return
+        try:
+            import win32con
+            hwnd = self._hwnd()
+            ex = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+            if not (ex & win32con.WS_EX_TOPMOST):
+                self.root.attributes("-topmost", True)
+        except Exception:
+            pass
+
     def _toggle_pin(self):
-        v = not bool(self.cfg.get("widget_always_on_top", False))
+        v = not bool(self.cfg.get("widget_always_on_top", True))
         self.cfg = config.update(widget_always_on_top=v)
         self.root.attributes("-topmost", v)
         self.status.configure(text="항상 위 켬" if v else "항상 위 끔")
@@ -474,6 +536,7 @@ class Widget:
 
     # ------------------------------------------------------------------
     def _tick(self):
+        self._keep_visible()
         self.refresh(only_if_changed=True)
         self._sync_google()
         self._check_alarms()
