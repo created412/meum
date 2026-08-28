@@ -385,34 +385,77 @@ class GoeCollector:
         return True
 
     def _open_row(self, y: int) -> Optional[str]:
-        """한 행을 열어 본문을 읽고 닫는다. 안 열리면 None."""
+        """
+        한 행을 열어 본문을 읽는다. 우리가 연 창은 닫고, 원래 열려 있던
+        창은 그대로 둔다. 못 읽으면 None.
+
+        **이미 열려 있는 쪽지를 누르면 GOE 는 새 창을 띄우지 않고 기존 창을
+        앞으로 올린다.** 예전에는 그걸 '못 읽음'으로 세었고, 두 번 이어지면
+        수집을 통째로 중단했다. 그래서 선생님이 쪽지 창을 몇 개 열어 두셨느냐에
+        따라 그 아래 쪽지가 통째로 누락됐다 — 누락이 들쭉날쭉했던 진짜 이유다.
+        이제는 앞으로 나온 그 창에서 본문을 읽는다.
+        """
         before = _visible_notes()
+        fg_before = win32gui.GetForegroundWindow()
         if not self._click_row(y):
             return None
+
         deadline = time.time() + OPEN_TIMEOUT
-        opened = None
+        opened = None            # 우리가 새로 연 창 (끝나면 닫는다)
+        existing = None          # 원래 열려 있던 창 (그대로 둔다)
         while time.time() < deadline:
-            time.sleep(0.35)
+            time.sleep(0.2)
             new = _visible_notes() - before
             if new:
                 opened = next(iter(new))
                 break
-        if not opened:
-            return None
-        time.sleep(0.9)
-        body = self._read_body(opened)
-        self._close(opened)
-        # 창이 닫힐 때까지 잠깐 기다린다
-        for _ in range(10):
-            time.sleep(0.2)
-            if opened not in _visible_notes():
+            fg = win32gui.GetForegroundWindow()
+            if fg in before and (fg != fg_before or time.time() > deadline - 4):
+                existing = fg
                 break
+
+        target = opened or existing
+        if not target:
+            return None
+        time.sleep(0.9 if opened else 0.3)
+        body = self._read_body(target)
+
+        if opened:
+            self._close(opened)
+            # 창이 닫힐 때까지 잠깐 기다린다
+            for _ in range(10):
+                time.sleep(0.2)
+                if opened not in _visible_notes():
+                    break
         return body or None
 
     # ---------- 수집 ----------
+    def scroll(self, notches: int) -> None:
+        """
+        목록을 굴린다. 양수면 아래로, 음수면 위로.
+
+        쪽지함에서 **눈에 보이는 줄만 누를 수 있다**. 한 화면은 여덟 줄쯤이라,
+        지난번 수집 뒤로 아홉 건 넘게 쌓이면 아래로 밀린 쪽지는 손이 닿지
+        않는 곳으로 가 영영 수집되지 않았다.
+        (실제로 8/21 에 온 학급자치회 조직도 회신 요청이 그렇게 사라졌다)
+        """
+        try:
+            l, t, r, b = win32gui.GetWindowRect(self.list_hwnd)
+            cx, cy = (l + r) // 2, (t + b) // 2
+            delta = -120 if notches > 0 else 120
+            for _ in range(abs(int(notches))):
+                win32gui.PostMessage(self.list_hwnd, win32con.WM_MOUSEWHEEL,
+                                     win32api.MAKELONG(0, delta),
+                                     win32api.MAKELONG(cx, cy))
+                time.sleep(0.15)
+            time.sleep(0.5)
+        except Exception:
+            pass
+
     def collect(self, known_keys: Set[str], max_rows: int = MAX_ROWS,
                 progress: Optional[Callable[[int, str], None]] = None,
-                should_stop: Optional[Callable[[], bool]] = None) -> List[GoeNote]:
+                should_stop: Optional[Callable[[], bool]] = None,
+                deep_pages: int = 0) -> List[GoeNote]:
         """
         위에서부터 훑다가 이미 본 쪽지를 **두 번 잇달아** 만나면 멈춘다.
 
@@ -420,59 +463,136 @@ class GoeCollector:
         맨 윗줄이 '이미 본 쪽지'라 곧바로 멈춰 버려, 그 아래에서 못 읽은
         쪽지들이 영영 수집되지 않기 때문이다. 한 줄 더 보는 값으로 막는다.
 
+        한 화면(여덟 줄)을 다 훑고도 새 쪽지가 이어지면 **목록을 내려서**
+        계속 본다. 쪽지가 한꺼번에 몰려 온 날 아래로 밀린 것들을 놓치지
+        않기 위해서다. deep_pages 를 주면 '이미 본 쪽지'를 만나도 멈추지
+        않고 그만큼 더 내려가며 훑는다(지난 것 메우기, --catchup).
+
         훑으면서 '몇 번째 줄이 무슨 쪽지인지'를 self.last_order 에 남긴다.
         목록을 읽을 수 없는 GOE 에서, 나중에 그 쪽지를 다시 띄울 때
         어느 줄을 눌러야 하는지 아는 유일한 단서다(reopen.py).
         """
-        l, t, r, b = win32gui.GetWindowRect(self.list_hwnd)
         out: List[GoeNote] = []
         seen_now: Set[str] = set()
-        self.last_order: List[str] = []
+        self.last_order = []
         known_streak = 0
         misses = 0
+        scrolled = 0
+        seen_rows = 0
+        stop = False
 
-        for row in range(max_rows):
-            y = t + 30 + row * ROW_H
-            if y > b - 10:
-                break
-            if should_stop and row and should_stop():
-                self.log("  · 선생님이 자리에 돌아오셔서 여기까지만 확인했습니다")
-                break
-            if progress:
-                progress(row, f"GOE 쪽지 {row + 1}번째 확인 중")
+        top, pitch, rows, _cw, _ch = self.row_metrics()
+        max_pages = max(1, deep_pages or 1)
 
-            body = self._open_row(y)
-            if not body:
-                misses += 1
-                # 연속으로 두 번 안 열리면 목록 끝으로 본다
-                if misses >= 2 and out:
-                    break
+        # ── 먼저, 이미 열려 있는 쪽지 창부터 그대로 읽는다 ──
+        # GOE 는 열려 있는 쪽지를 다시 눌러도 새 창을 띄우지 않고 기존 창을
+        # 올릴 뿐이다. 게다가 우리 클릭은 메시지 전송이라 포그라운드도 바뀌지
+        # 않아, 클릭만으로는 그 줄을 읽을 방법이 아예 없었다.
+        # 그 줄들이 '못 읽음'으로 세어지고, 세 번 이어지면 수집이 통째로
+        # 중단됐다 — 누락이 들쭉날쭉했던 진짜 이유다.
+        # 창이 열려 있다는 것은 클릭 없이도 본문을 읽을 수 있다는 뜻이니,
+        # 먼저 읽어 두면 그 줄을 못 눌러도 잃지 않는다.
+        preopened = 0
+        for h in list(_visible_notes()):
+            try:
+                body = normalize(self._read_body(h) or "")
+                if not body.strip():
+                    continue
+                note = GoeNote(body=body, collected_at=datetime.now(), row=-1)
+                q_sender, q_time = parse_quote_header(body)
+                note.sender = q_sender or guess_sender(body)
+                note.received_at = q_time
+                note.subject = guess_subject(body)
+                if note.key in seen_now:
+                    continue
+                seen_now.add(note.key)
+                preopened += 1
+                if note.key not in known_keys:
+                    out.append(note)
+                    self.log(f"  + GOE(열려 있던 쪽지): {note.subject[:30]}")
+            except Exception:
                 continue
-            misses = 0
+        if preopened:
+            self.log(f"  · 열려 있던 쪽지 창 {preopened}건을 먼저 읽었습니다")
 
-            body = normalize(body)
-            note = GoeNote(body=body, collected_at=datetime.now(), row=row)
-            q_sender, q_time = parse_quote_header(body)
-            # 전달된 쪽지면 원 발신자·발신시간이 그대로 들어 있다
-            note.sender = q_sender or guess_sender(body)
-            note.received_at = q_time
-            note.subject = guess_subject(body)
+        try:
+            for page in range(max_pages + 8):        # 넉넉한 상한 (안전장치)
+                new_this_page = 0
 
-            if note.key in seen_now:
-                continue                      # 같은 창이 다시 잡힌 경우
-            seen_now.add(note.key)
-            self.last_order.append(note.key)  # 몇 번째 줄이 무슨 쪽지였는지
+                for row in range(rows):
+                    if seen_rows >= max_rows:
+                        stop = True
+                        break
+                    if should_stop and seen_rows and should_stop():
+                        self.log("  · 선생님이 자리에 돌아오셔서 여기까지만 확인했습니다")
+                        stop = True
+                        break
+                    if progress:
+                        progress(seen_rows, f"GOE 쪽지 {seen_rows + 1}번째 확인 중")
+                    seen_rows += 1
 
-            if note.key in known_keys:
-                known_streak += 1
-                if known_streak >= 2:
-                    self.log(f"  · 이미 본 쪽지가 이어져 중단 ({row + 1}번째)")
+                    body = self._open_row(top + row * pitch)
+                    if not body:
+                        misses += 1
+                        # 잇달아 못 읽으면 목록 끝으로 본다.
+                        # 여기서 멈추면 그 아래는 통째로 누락되므로,
+                        # 반드시 기록을 남긴다(예전에는 조용히 멈췄다).
+                        # 이미 열려 있던 쪽지의 줄은 눌러도 새 창이 뜨지 않는다.
+                        # 그런 줄이 있을 만큼 여유를 두고 센다(그 본문은 위에서
+                        # 이미 읽어 두었으므로 건너뛰어도 잃는 것이 없다).
+                        if misses >= 3 + preopened:
+                            self.log(f"  · {seen_rows}번째 줄부터 열리지 않아 "
+                                     f"여기서 멈춥니다 (아래는 확인하지 못했습니다)")
+                            stop = True
+                            break
+                        continue
+                    misses = 0
+
+                    body = normalize(body)
+                    note = GoeNote(body=body, collected_at=datetime.now(), row=row)
+                    q_sender, q_time = parse_quote_header(body)
+                    # 전달된 쪽지면 원 발신자·발신시간이 그대로 들어 있다
+                    note.sender = q_sender or guess_sender(body)
+                    note.received_at = q_time
+                    note.subject = guess_subject(body)
+
+                    if note.key in seen_now:
+                        continue                  # 같은 창이 다시 잡힌 경우
+                    seen_now.add(note.key)
+                    if not scrolled:
+                        # 줄 순서는 첫 화면만 믿는다. 내린 뒤의 줄 번호는
+                        # 화면 기준이라 목록 전체의 자리와 다르다.
+                        self.last_order.append(note.key)
+
+                    if note.key in known_keys:
+                        known_streak += 1
+                        if known_streak >= 2 and not deep_pages:
+                            self.log(f"  · 이미 본 쪽지가 이어져 중단 "
+                                     f"({seen_rows}번째)")
+                            stop = True
+                            break
+                        continue
+                    known_streak = 0
+
+                    out.append(note)
+                    new_this_page += 1
+                    self.log(f"  + GOE: {note.subject[:34]}")
+
+                if stop:
                     break
-                continue
-            known_streak = 0
-
-            out.append(note)
-            self.log(f"  + GOE: {note.subject[:34]}")
+                # 이 화면에서 새 쪽지가 계속 나왔거나, 지난 것을 메우는 중이면
+                # 목록을 내려서 더 본다
+                if not (new_this_page or page < (deep_pages - 1)):
+                    break
+                if seen_rows >= max_rows:
+                    break
+                self.log("  · 목록을 내려 더 확인합니다")
+                self.scroll(3)                     # 휠 한 번에 세 줄이 기본
+                scrolled += 3
+        finally:
+            if scrolled:
+                # 선생님이 보시던 자리로 되돌린다
+                self.scroll(-(scrolled + 3))
 
         self.log(f"GOE 신규 {len(out)}건")
         return out

@@ -55,7 +55,8 @@ def setup_logging() -> logging.Logger:
 class Runner:
     def __init__(self, cfg: Optional[dict] = None, trigger: str = "manual",
                  headless: bool = False,
-                 should_stop: Optional[Callable[[], bool]] = None):
+                 should_stop: Optional[Callable[[], bool]] = None,
+                 deep_pages: int = 0):
         self.cfg = cfg or config.load()
         self.trigger = trigger
         self.headless = headless
@@ -63,6 +64,8 @@ class Runner:
         # 못 읽은 쪽지는 '읽음' 표시가 되지 않으므로 다음 기회에 그대로 다시 온다.
         self.should_stop = should_stop
         self.stopped_early = False
+        # 지난 쪽지 메우기: 목록을 이만큼 더 내려가며 훑는다(--catchup)
+        self.deep_pages = deep_pages
         self.log = setup_logging()
         self.state = State()
 
@@ -366,9 +369,15 @@ class Runner:
         try:
             col.attach()
             known = self.state.known_source_keys("goe")
+            # 지난 것을 메울 때는 줄 수 상한도 함께 풀어 준다.
+            # (상한이 25줄이라, 목록을 내려도 세 화면에서 멈춰 버렸다)
+            max_rows = int(self.cfg.get("goe_max_rows", 25))
+            if self.deep_pages:
+                max_rows = max(max_rows, self.deep_pages * 10)
             notes = col.collect(known_keys=known,
-                                max_rows=int(self.cfg.get("goe_max_rows", 25)),
-                                should_stop=self.should_stop)
+                                max_rows=max_rows,
+                                should_stop=self.should_stop,
+                                deep_pages=self.deep_pages)
             # 훑으면서 본 줄 순서를 남긴다. GOE 목록은 읽을 수 없어서,
             # 나중에 그 쪽지를 다시 띄울 때 어느 줄을 눌러야 하는지
             # 알 수 있는 유일한 단서다 (reopen.py).

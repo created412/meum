@@ -13,6 +13,7 @@
     메움.exe --doctor        진단 보고서 만들기 (연결이 안 될 때)
     메움.exe --ensure-panel  패널이 꺼져 있으면 되살린다 (스케줄러가 부름)
     메움.exe --set-report URL 진단 보고서를 받을 구글 폼 주소를 설정한다
+    메움.exe --catchup       목록을 더 내려가며 지난 쪽지를 메운다
     메움.exe --uninstall     자동 실행 등록만 해제
 """
 from __future__ import annotations
@@ -156,6 +157,9 @@ def main() -> int:
                    help="메신저가 켜져 있는데 패널이 없으면 띄운다")
     p.add_argument("--set-report", metavar="URL", default=None,
                    help="진단 보고서를 받을 구글 폼 주소 (칸 번호는 알아서 찾는다)")
+    p.add_argument("--catchup", type=int, nargs="?", const=4, default=0,
+                   metavar="N",
+                   help="목록을 N화면만큼 더 내려가며 지난 쪽지를 메운다 (기본 4)")
     args = p.parse_args()
 
     if args.calendar:
@@ -200,7 +204,8 @@ def main() -> int:
     # 그냥 두 번 클릭했다면 '할 일 패널'을 연다.
     # 쪽지 정리는 패널이 지켜보다가 조용할 때 알아서 하므로,
     # 선생님이 정리를 '실행'하실 일은 없다. (--collect 로는 여전히 가능)
-    if args.trigger == "manual" and not args.collect and not args.headless:
+    if (args.trigger == "manual" and not args.collect and not args.catchup
+            and not args.headless):
         from meum.widget import show
         show()
         return 0
@@ -221,7 +226,7 @@ def main() -> int:
     # 확신도 높은 할 일은 바로 저장되고, 애매한 것은 패널에 '미확정'으로 남아
     # 교사가 패널에서 판단한다. 바로가기로 직접 실행하면 확인 창이 뜬다.
     cfg = config.load()
-    headless = args.headless or (
+    headless = args.headless or bool(args.catchup) or (
         args.trigger in ("daily", "logon", "watch") and cfg.get("auto_mode", True))
 
     # 감시가 부른 정리는, 선생님이 자리에 돌아오시면 그 자리에서 멈춘다.
@@ -233,7 +238,7 @@ def main() -> int:
 
     from meum.app import Runner
     return Runner(trigger=args.trigger, headless=headless,
-                  should_stop=should_stop).run()
+                  should_stop=should_stop, deep_pages=args.catchup).run()
 
 
 if __name__ == "__main__":

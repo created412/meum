@@ -194,11 +194,26 @@ class RuleExtractor:
         headers = []
         for raw in body.split("\n"):
             s = raw.strip()
-            if not s or s.startswith(("-", "–", "—", "·", "•")):
+            if not s:
                 continue
             dates = dateparse.find_dates(s, base)
             if not dates:
                 continue
+
+            # '-' 로 시작하는 줄은 대개 윗줄 행사의 부연 설명이라 건너뛴다.
+            # 그러나 공문 쪽지에서 '-' 는 **지시사항을 적는 자리**이기도 하다.
+            #   -첨부파일의 조직도를 작성하셔서 … 8/31 17시까지 회신★부탁드립니다
+            # 예전에는 이런 줄을 통째로 버려, '-' 뒤에 적힌 마감은 하나도 잡지
+            # 못했다. 우연히 놓친 것이 아니라 늘 놓치고 있었다.
+            # 그래서 날짜에 더해 **구체적인 행동**(제출·회신·작성 …)과 요청이
+            # 함께 있을 때만 그 줄도 일정으로 본다.
+            # '참고 부탁드립니다' 같은 배경 설명까지 일정으로 만들면
+            # 목록이 문장 조각으로 뒤덮인다(시험이 그렇게 잡아냈다).
+            if s.startswith(("-", "–", "—", "·", "•")):
+                if not (CONCRETE_ACTION.search(s)
+                        and (REQUEST_ENDING.search(s) or "까지" in s)):
+                    continue
+
             title = dateparse.strip_datetime_tokens(s)
             if len(title) < 3:
                 continue
