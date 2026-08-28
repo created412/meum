@@ -499,15 +499,20 @@ def create_desktop_shortcuts() -> bool:
         args_widget = ("--widget" if getattr(sys, "frozen", False)
                        else f'"{app_root() / "run.py"}" --widget')
 
-        # 옛 '쪽지 정리' 바로가기가 남아 있으면 치운다
-        for stale in (f"{APP_NAME} - 쪽지 정리.lnk", "BrityTodo - 쪽지 정리.lnk"):
+        # 옛 이름의 바로가기가 남아 있으면 치운다.
+        # 이름은 '메움' 하나로 통일한다 — 바탕화면에서도, 시작 메뉴에서도
+        # '메움' 만 치면 나오게 하기 위해서다.
+        for stale in (f"{APP_NAME} - 쪽지 정리.lnk", f"{APP_NAME} - 할 일 패널.lnk",
+                      "BrityTodo - 쪽지 정리.lnk", "BrityTodo - 할 일 패널.lnk"):
             try:
                 (desktop / stale).unlink()
             except Exception:
                 pass
 
+        register_start_menu()
+
         for name, args, desc in (
-                (f"{APP_NAME} - 할 일 패널", args_widget,
+                (APP_NAME, args_widget,
                  f"{APP_NAME} — 놓친 업무를 메워드립니다"),):
             lnk = sh.CreateShortcut(str(desktop / f"{name}.lnk"))
             lnk.TargetPath = exe
@@ -546,6 +551,37 @@ def register_widget_autostart() -> bool:
         return register_startup_shortcut()
 
 
+def register_start_menu() -> bool:
+    """
+    시작 메뉴에 '메움'을 올린다.
+
+    윈도우 키를 누르고 '메움'만 치면 뜨게 하기 위해서다.
+    바탕화면 바로가기는 창을 여러 개 띄워 두면 가려지지만,
+    시작 메뉴는 언제든 이름만으로 닿는다.
+    """
+    try:
+        import win32com.client
+        progs = (Path(os.environ.get("APPDATA", ""))
+                 / r"Microsoft\Windows\Start Menu\Programs")
+        if not progs.exists():
+            return False
+        sh = win32com.client.Dispatch("WScript.Shell")
+        lnk = sh.CreateShortcut(str(progs / f"{APP_NAME}.lnk"))
+        if getattr(sys, "frozen", False):
+            lnk.TargetPath = sys.executable
+            lnk.Arguments = "--widget"
+        else:
+            pyw = Path(sys.executable).with_name("pythonw.exe")
+            lnk.TargetPath = str(pyw if pyw.exists() else sys.executable)
+            lnk.Arguments = f'"{app_root() / "run.py"}" --widget'
+        lnk.WorkingDirectory = str(app_root())
+        lnk.Description = f"{APP_NAME} — {APP_TAGLINE}"
+        lnk.Save()
+        return True
+    except Exception:
+        return False
+
+
 def register_startup_shortcut() -> bool:
     """
     '시작프로그램' 폴더에도 바로가기를 둔다.
@@ -578,6 +614,16 @@ def register_startup_shortcut() -> bool:
         return False
 
 
+def unregister_start_menu() -> None:
+    try:
+        p = (Path(os.environ.get("APPDATA", ""))
+             / r"Microsoft\Windows\Start Menu\Programs" / f"{APP_NAME}.lnk")
+        if p.exists():
+            p.unlink()
+    except Exception:
+        pass
+
+
 def unregister_startup_shortcut() -> None:
     try:
         p = (Path(os.environ.get("APPDATA", ""))
@@ -600,6 +646,7 @@ def unregister_widget_autostart() -> None:
     except Exception:
         pass
     unregister_startup_shortcut()
+    unregister_start_menu()
 
 
 def _split_cmd(cmd: str) -> tuple:

@@ -256,47 +256,54 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
     order = _goe_order()
     rank = order.index(msg_id) if msg_id in order else None
 
-    # 예상 줄이 화면 밖이면 실제 위치는 그보다 더 아래다(위 설명 참고).
-    # 헛되이 여덟 줄을 열어 볼 것 없이 바로 알려 드린다.
+    # 예상 줄이 화면 밖이면 목록을 내려서 찾아간다.
+    # 예전에는 '보이는 범위를 지나 있습니다. 아래로 내리신 뒤 다시 눌러 주세요'
+    # 라고 떠넘겼는데, 내리는 일은 프로그램이 할 수 있는 일이다.
+    pages = 1
     if rank is not None and rank >= n_rows:
-        return False, ("그 쪽지는 GOE 쪽지함 화면에 보이는 범위를 지나 있습니다.\n"
-                       "쪽지함을 아래로 내리신 뒤 다시 눌러 주세요.")
+        pages = min(8, rank // n_rows + 2)
 
-    todo = _near_first(rank, n_rows)
-    tried = set()
+    scrolled = 0
     opened = None
     try:
-        while todo:
-            row = todo.pop(0)
-            if row in tried or not (0 <= row < n_rows):
-                continue
-            tried.add(row)
+        for page in range(pages):
+            todo = _near_first(rank if page == 0 else None, n_rows)
+            tried = set()
+            while todo:
+                row = todo.pop(0)
+                if row in tried or not (0 <= row < n_rows):
+                    continue
+                tried.add(row)
 
-            h, home, is_new = _peek_row(col, t + 30 + row * ROW_H)
-            if h is None:
-                continue
-            if not is_new:
-                # 이미 열려 있던 쪽지다. 그런 창은 1)에서 이미 다 확인했으므로
-                # 찾는 쪽지가 아니다. 남의 창이니 닫지도, 옮기지도 않는다.
-                continue
+                h, home, is_new = _peek_row(col, t + 30 + row * ROW_H)
+                if h is None:
+                    continue
+                if not is_new:
+                    # 이미 열려 있던 쪽지다. 그런 창은 1)에서 이미 다 확인했으므로
+                    # 찾는 쪽지가 아니다. 남의 창이니 닫지도, 옮기지도 않는다.
+                    continue
 
-            opened = h
-            key = _goe_key(col._read_body(h))
-            if key == msg_id:
-                _unpark(h, home)          # 원래 자리로 돌려놓고
-                _front(h)                 # 그때 처음으로 화면에 보인다
+                opened = h
+                key = _goe_key(col._read_body(h))
+                if key == msg_id:
+                    _unpark(h, home)          # 원래 자리로 돌려놓고
+                    _front(h)                 # 그때 처음으로 화면에 보인다
+                    opened = None
+                    return True, "GOE메신저에서 원래 쪽지를 열었습니다."
+
+                col._close(h)
                 opened = None
-                return True, "GOE메신저에서 원래 쪽지를 열었습니다."
 
-            col._close(h)
-            opened = None
+                # 빗나갔다면 이 줄의 정체로 '몇 칸 어긋났는지'를 알아내
+                # 곧장 그 자리로 건너뛴다 (수집하지 못한 쪽지가 섞여 있을 때)
+                if page == 0 and rank is not None and key in order:
+                    jump = rank + (row - order.index(key))
+                    if 0 <= jump < n_rows and jump not in tried:
+                        todo.insert(0, jump)
 
-            # 빗나갔다면 이 줄의 정체로 '몇 칸 어긋났는지'를 알아내
-            # 곧장 그 자리로 건너뛴다 (수집하지 못한 쪽지가 섞여 있을 때)
-            if rank is not None and key in order:
-                jump = rank + (row - order.index(key))
-                if 0 <= jump < n_rows and jump not in tried:
-                    todo.insert(0, jump)
+            if page < pages - 1:
+                col.scroll(3)
+                scrolled += 3
     finally:
         # 확인하다 만 창을 화면 밖에 버려 두지 않는다
         if opened:
@@ -304,9 +311,15 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
                 col._close(opened)
             except Exception:
                 pass
+        # 내려놓은 목록은 선생님이 보시던 자리로 되돌린다
+        if scrolled:
+            try:
+                col.scroll(-(scrolled + 3))
+            except Exception:
+                pass
 
     return False, ("GOE 쪽지함에서 그 쪽지를 찾지 못했습니다.\n"
-                   "(지우셨거나 쪽지함 화면 밖으로 밀려났을 수 있습니다)")
+                   "(지우셨거나 쪽지함에서 삭제되었을 수 있습니다)")
 
 
 # --------------------------------------------------------------------------
