@@ -103,6 +103,26 @@ def _goe_key(body: str) -> str:
         _norm(normalize(body or "")).encode("utf-8")).hexdigest()
 
 
+def _read_body_wait(col, hwnd: int, timeout: float = 2.0) -> str:
+    """
+    쪽지 본문을 **채워질 때까지 기다렸다가** 읽는다.
+
+    창이 뜬 그 순간에 읽으면 아직 글자가 들어오기 전이라 빈 값이 나온다.
+    빈 값은 어느 쪽지와도 맞지 않으므로, 예전에는 맞는 줄을 열어 놓고도
+    '아니네' 하고 닫아 버렸다. 그래서 끝까지 뒤지다 못 찾았다(실측).
+
+    비어 있으면 잠깐 기다렸다 다시 읽고, 그래도 비면 빈 값을 돌려준다.
+    """
+    deadline = time.time() + timeout
+    while True:
+        body = col._read_body(hwnd) or ""
+        if body.strip():
+            return body
+        if time.time() >= deadline:
+            return ""
+        time.sleep(0.06)
+
+
 def _goe_order() -> list:
     """
     쪽지함 목록 순서(맨 위부터)를 짐작한다.
@@ -243,7 +263,7 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
     # 1) 이미 떠 있는 쪽지 창 가운데 있는가 — 클릭조차 필요 없다
     for h in list(_visible_notes()):
         try:
-            if _goe_key(col._read_body(h)) == msg_id:
+            if _goe_key(_read_body_wait(col, h)) == msg_id:
                 _front(h)
                 return True, "GOE메신저에서 원래 쪽지를 열었습니다."
         except Exception:
@@ -284,7 +304,14 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
                     continue
 
                 opened = h
-                key = _goe_key(col._read_body(h))
+                body = _read_body_wait(col, h)
+                if not body.strip():
+                    # 본문을 끝내 못 읽었다. '아니다' 가 아니라 '모르겠다' 이므로
+                    # 건너뛰기 계산에도 쓰지 않는다.
+                    col._close(h)
+                    opened = None
+                    continue
+                key = _goe_key(body)
                 if key == msg_id:
                     _unpark(h, home)          # 원래 자리로 돌려놓고
                     _front(h)                 # 그때 처음으로 화면에 보인다

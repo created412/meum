@@ -30,3 +30,8 @@ desktop.ini
 
 # 인수인계 문서는 저장소에 올리지 않음
 HANDOVER.md
+
+# 도름스 점검 도구가 만든 작업 파일
+.dorms-check/
+dorms-answers.json
+dorms-check.config.json
