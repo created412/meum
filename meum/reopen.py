@@ -20,6 +20,7 @@ import re
 import time
 from typing import Optional, Tuple
 
+import win32api
 import win32con
 import win32gui
 
@@ -46,7 +47,8 @@ def _front(hwnd: int) -> None:
 
 # --------------------------------------------------------------------------
 def _open_brity(cfg: dict, subject: str, sender: str) -> Tuple[bool, str]:
-    from .collector import BrityCollector, _find_all, _find_first
+    from .collector import (BrityCollector, _find_all, _find_first,
+                            wake_accessibility)
 
     col = BrityCollector(cfg, log=lambda s: None)
     col.attach()
@@ -87,9 +89,22 @@ def _open_brity(cfg: dict, subject: str, sender: str) -> Tuple[bool, str]:
             _front(h)
             return True, "브리티에서 원래 쪽지를 열었습니다."
 
+    # 창이 내려가 있으면 되살린다. 수집기 _open_once 와 같은 준비다.
+    col.ensure_restored()
+    col._wait_no_detail()
+
     before = set(_brity_notes(col))
     fg_before = win32gui.GetForegroundWindow()
-    l, t, r, b = target.rect
+
+    # **누르기 직전에 좌표를 다시 구한다.**
+    # 목록을 훑는 사이에 목록이 밀리거나 새로 고쳐지면 그때 읽어 둔 자리는
+    # 이미 다른 줄이거나 줄 사이 빈 곳이다. 그러면 아무 창도 뜨지 않고
+    # 10초를 헛기다린 뒤 '쪽지 창이 열리지 않았습니다' 로 끝났다(실측).
+    # 수집기가 쪽지를 열 때 같은 이유로 좌표를 다시 구한다.
+    rect = col._current_rect(target) or target.rect
+    l, t, r, b = rect
+    if r - l <= 0:
+        return False, "쪽지가 목록에서 밀려났습니다. 목록을 새로 고친 뒤 다시 눌러 주세요."
     col._click(l + (r - l) // 2, t + (b - t) // 2, double=True)
 
     deadline = time.time() + 10
@@ -98,6 +113,7 @@ def _open_brity(cfg: dict, subject: str, sender: str) -> Tuple[bool, str]:
         new = set(_brity_notes(col)) - before
         if new:
             h = next(iter(new))
+            wake_accessibility(h)
             time.sleep(0.6)
             _front(h)
             return True, "브리티에서 원래 쪽지를 열었습니다."
@@ -280,6 +296,27 @@ def _peek_row(col, y: int, timeout: float = 6.0):
     return None, None, False
 
 
+def _scroll_to_top(col) -> None:
+    """
+    쪽지함을 맨 위로 올린다.
+
+    col.scroll() 은 한 칸마다 0.15초를 쉬어 마흔 칸이면 6초가 걸린다.
+    여기서는 자리만 맞추면 되므로 촘촘히 보내고 마지막에만 한 번 쉰다
+    (실측: 6.5초 → 1.2초).
+    """
+    try:
+        l, t, r, b = win32gui.GetWindowRect(col.list_hwnd)
+        cx, cy = (l + r) // 2, (t + b) // 2
+        lp = win32api.MAKELONG(cx, cy)
+        for _ in range(40):
+            win32gui.PostMessage(col.list_hwnd, win32con.WM_MOUSEWHEEL,
+                                 win32api.MAKELONG(0, 120), lp)
+            time.sleep(0.02)
+        time.sleep(0.45)
+    except Exception:
+        pass
+
+
 def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
     """
     GOE 쪽지를 곧바로 띄운다.
@@ -310,7 +347,14 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
         except Exception:
             continue
 
-    # 2) 예상 줄부터 확인한다
+    # 2) 목록을 맨 위로 올린 뒤 예상 줄부터 확인한다.
+    #
+    #    쪽지함은 선생님이 보시던 자리에 스크롤되어 있을 수 있다. 그러면
+    #    '맨 위가 최신' 이라는 전제가 깨져 저장해 둔 순서(rank)가 통째로
+    #    어긋나고, 맞는 줄을 영영 못 찾는다(실측: 12건 중 11건 실패).
+    #    맨 위로 올려 두면 rank 가 곧 줄 번호가 되어 한 번에 맞는다.
+    _scroll_to_top(col)
+
     l, t, r, b = win32gui.GetWindowRect(col.list_hwnd)
     n_rows = max(1, min(max_rows, ((b - 10) - (t + 30)) // ROW_H + 1))
 
@@ -320,9 +364,16 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
     # 예상 줄이 화면 밖이면 목록을 내려서 찾아간다.
     # 예전에는 '보이는 범위를 지나 있습니다. 아래로 내리신 뒤 다시 눌러 주세요'
     # 라고 떠넘겼는데, 내리는 일은 프로그램이 할 수 있는 일이다.
-    pages = 1
+    # 예상 줄이 화면 안이어도 목록을 내려 본다.
+    #
+    # 예전에는 rank 가 화면 안(0~7)이면 pages=1 이라 **한 번도 내려보지
+    # 않았다.** 그런데 저장해 둔 순서는 실제 쪽지함과 어긋나기 쉽다
+    # (수집하지 못한 쪽지가 섞이거나, 선생님이 쪽지를 지우시면 밀린다).
+    # 실측: 예상 줄 2번이라 8줄만 훑고 끝냈는데 그 8줄 가운데 6줄이
+    # 아예 우리가 모르는 쪽지였다 — 찾을 수가 없었다.
+    pages = 3
     if rank is not None and rank >= n_rows:
-        pages = min(8, rank // n_rows + 2)
+        pages = min(8, rank // n_rows + 3)
 
     scrolled = 0
     opened = None
@@ -379,7 +430,9 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
                 col._close(opened)
             except Exception:
                 pass
-        # 내려놓은 목록은 선생님이 보시던 자리로 되돌린다
+        # 내려놓은 목록은 맨 위로 되돌려 둔다.
+        # (원래 보시던 자리까지 정확히 되돌릴 방법이 없다. 맨 위가
+        #  쪽지함의 기본 자리이므로 그 자리로 둔다)
         if scrolled:
             try:
                 col.scroll(-(scrolled + 3))
