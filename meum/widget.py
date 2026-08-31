@@ -307,6 +307,9 @@ class Widget:
         self._last_done = None
         self._gs_note = ""
         self._stamp = ""
+        # 지난 날짜는 기본으로 접어 둔다. 지우지는 않는다 —
+        # 놓친 일은 빨간 '오늘 처리' 칸에 그대로 올라온다.
+        self._show_past = False
 
     def _place(self):
         """
@@ -968,13 +971,28 @@ class Widget:
                 dd += timedelta(days=1)
 
         dated = sorted(set([d for d in by_day if d is not None]) | set(sch.keys()))
-        for d in dated:
+
+        def draw_day(d):
             label, dday, color = _fmt_day(d, today)
             self._day_header(label, dday, color)
             for e in sch.get(d, []):
                 self._school_item(e)
             for r in sorted(by_day.get(d, []), key=lambda x: (x["due_at"] or "")):
                 self._item(r, color, show_time=True)
+
+        # 오늘부터 앞의 것을 먼저 보여 준다
+        for d in [x for x in dated if x >= today]:
+            draw_day(d)
+
+        # 지난 날짜는 맨 아래에 접어 둔다 (지우지 않는다)
+        past = [x for x in dated if x < today]
+        if past:
+            n = sum(len(by_day.get(x, [])) for x in past)
+            if n:
+                self._past_header(n)
+                if self._show_past:
+                    for d in past:
+                        draw_day(d)
 
         if None in by_day:
             self._day_header("기한 없음", f"{len(by_day[None])}", NONE_C)
@@ -1011,6 +1029,31 @@ class Widget:
     # ------------------------------------------------------------------
     # 그리기 조각
     # ------------------------------------------------------------------
+    def _past_header(self, n: int):
+        """
+        '지난 일 N건' — 눌러서 폈다 접는다.
+
+        지난 일을 지우지 않는 것은 이 프로그램의 약속이다. 다만 오늘 볼 것이
+        위로 오도록 목록에서는 접어 둔다. 놓친 일은 맨 위 빨간 칸에 그대로
+        올라오므로 접혀 있어도 눈에 띈다.
+        """
+        fr = tk.Frame(self.body, bg=PAGE_BG, cursor="hand2")
+        fr.pack(fill="x", padx=12, pady=(16, 5))
+        mark = "▾" if self._show_past else "▸"
+        lab = tk.Label(fr, text=f"{mark} 지난 일", font=self.f["day"],
+                       bg=PAGE_BG, fg=FAINT)
+        lab.pack(side="left")
+        pill = tk.Label(fr, text=f"{n}건", font=self.f["pill"], bg=FAINT,
+                        fg="white", padx=7, pady=1)
+        pill.pack(side="right")
+
+        def toggle(_=None):
+            self._show_past = not self._show_past
+            self.refresh()
+
+        for w in (fr, lab, pill):
+            w.bind("<Button-1>", toggle)
+
     def _day_header(self, label: str, badge: str, color: str):
         fr = tk.Frame(self.body, bg=PAGE_BG)
         fr.pack(fill="x", padx=12, pady=(14, 5))
