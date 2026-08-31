@@ -23,8 +23,6 @@ from pathlib import Path
 from tkinter import font as tkfont
 from typing import Dict, List, Optional, Tuple
 
-import calendar as pycal
-
 import win32gui
 
 from . import APP_NAME, APP_TAGLINE_SHORT, WINDOW_PANEL, config
@@ -180,8 +178,7 @@ class Widget:
             "calb": tkfont.Font(family="맑은 고딕", size=9, weight="bold"),
             "check": tkfont.Font(family="맑은 고딕", size=12),
         }
-        today = date.today()
-        self.cal_y, self.cal_m = today.year, today.month
+        self.cal_offset = 0          # 이번 주 기준 몇 주를 옮겨 봤는가
         self.day_filter = None
         self._drag = None
         self._cache = None            # 짧은 시간 안의 반복 조회용 (구형 노트북 배려)
@@ -732,7 +729,7 @@ class Widget:
         """지금 화면에 그려야 할 내용의 지문. 같으면 다시 그릴 필요가 없다."""
         rows, last, events = self._load()
         return (
-            self.view, self.day_filter, self.cal_y, self.cal_m,
+            self.view, self.day_filter, self.cal_offset, date.today(),
             len(events), str(last),
             tuple(sorted(
                 (r["task_id"], r.get("status"), r.get("due_at"),
@@ -755,9 +752,10 @@ class Widget:
             WHERE t.status IN ('approved','pending')
         """)]
         last = st.last_run_at
-        y, m = self.cal_y, self.cal_m
-        lo = date(y - (m == 1), 12 if m == 1 else m - 1, 1).isoformat()
-        hi = date(y + (m == 12), 1 if m == 12 else m + 1, 28).isoformat()
+        # 달력에 보이는 구간만 읽는다 (넉넉히 앞뒤 한 주씩 더)
+        w_start, w_end, _ = self.cal_window()
+        lo = (w_start - timedelta(days=7)).isoformat()
+        hi = (w_end + timedelta(days=7)).isoformat()
         try:
             events = [dict(r) for r in st.school_events_between(lo, hi)]
         except Exception:
@@ -1148,13 +1146,32 @@ class Widget:
     # ------------------------------------------------------------------
     # 작은 달력
     # ------------------------------------------------------------------
+    def cal_window(self):
+        """
+        달력에 보여 줄 구간 — **이번 주부터 앞으로 몇 주**.
+
+        한 달치를 다 펼치면 절반이 이미 지난 날이라, 정작 봐야 할 쪽지가
+        아래로 밀린다. 그래서 이번 주 월요일부터 3주만 보여 주고,
+        날이 지나면 저절로 다음 주가 올라온다.
+        (지난 일정은 패널의 '지남' 카드가 따로 챙기므로 여기서 볼 일이 없다)
+        """
+        weeks = max(1, min(6, int(self.cfg.get("cal_weeks", 3))))
+        today = date.today()
+        start = today - timedelta(days=today.weekday())          # 이번 주 월요일
+        start += timedelta(weeks=int(getattr(self, "cal_offset", 0)))
+        return start, start + timedelta(days=weeks * 7 - 1), weeks
+
     def _paint_mini(self, marks):
         for w in self.mini_head.winfo_children():
             w.destroy()
         for w in self.mini_grid.winfo_children():
             w.destroy()
 
-        title = tk.Label(self.mini_head, text=f"{self.cal_y}년 {self.cal_m}월",
+        start, end, weeks = self.cal_window()
+        today = date.today()
+
+        label = f"{start.month}/{start.day} – {end.month}/{end.day}"
+        title = tk.Label(self.mini_head, text=label,
                          font=self.f["calb"], bg=CARD_BG, fg=FG, cursor="hand2")
         title.pack(side="left")
         title.bind("<Button-1>", lambda e: self._open_calendar())
@@ -1162,11 +1179,19 @@ class Widget:
         nxt = tk.Label(self.mini_head, text=" › ", font=self.f["calb"], bg=CARD_BG,
                        fg=MUTED, cursor="hand2")
         nxt.pack(side="right")
-        nxt.bind("<Button-1>", lambda e: self._shift_month(1))
+        nxt.bind("<Button-1>", lambda e: self._shift_weeks(1))
         prev = tk.Label(self.mini_head, text=" ‹ ", font=self.f["calb"], bg=CARD_BG,
                         fg=MUTED, cursor="hand2")
         prev.pack(side="right")
-        prev.bind("<Button-1>", lambda e: self._shift_month(-1))
+        prev.bind("<Button-1>", lambda e: self._shift_weeks(-1))
+
+        # 앞뒤로 옮겨 봤다면 이번 주로 돌아올 길을 둔다
+        if getattr(self, "cal_offset", 0):
+            back = tk.Label(self.mini_head, text="이번 주", font=self.f["small"],
+                            bg="#e0e7ff", fg=ACCENT_DARK, cursor="hand2",
+                            padx=6, pady=1)
+            back.pack(side="right", padx=(0, 6))
+            back.bind("<Button-1>", lambda e: self._shift_weeks(None))
 
         if self.day_filter:
             clr = tk.Label(self.mini_head, text="전체 보기", font=self.f["small"],
@@ -1182,20 +1207,15 @@ class Widget:
             tk.Label(self.mini_grid, text=wk, font=self.f["small"], bg=CARD_BG,
                      fg=fg).grid(row=0, column=i, pady=(2, 1))
 
-        first = date(self.cal_y, self.cal_m, 1)
-        last = date(self.cal_y, self.cal_m, pycal.monthrange(self.cal_y, self.cal_m)[1])
-        start = first - timedelta(days=first.weekday())
-        rows = ((last + timedelta(days=(6 - last.weekday()))) - start).days // 7 + 1
-        today = date.today()
-
         d = start
-        for r in range(1, rows + 1):
+        for r in range(1, weeks + 1):
             for c in range(7):
-                self._mini_cell(r, c, d, first, last, today, marks.get(d, set()))
+                self._mini_cell(r, c, d, today, marks.get(d, set()))
                 d += timedelta(days=1)
 
-    def _mini_cell(self, r, c, d, first, last, today, colors):
-        in_month = first <= d <= last
+    def _mini_cell(self, r, c, d, today, colors):
+        # 지난 날은 흐리게 — 이제 볼 일이 없다는 뜻이다
+        in_month = d >= today
         bg = CARD_BG
         if d == self.day_filter:
             bg = CELL_PICK
@@ -1237,14 +1257,13 @@ class Widget:
             except Exception:
                 pass
 
-    def _shift_month(self, delta):
-        m = self.cal_m + delta
-        y = self.cal_y
-        if m < 1:
-            m, y = 12, y - 1
-        elif m > 12:
-            m, y = 1, y + 1
-        self.cal_y, self.cal_m = y, m
+    def _shift_weeks(self, delta):
+        """앞뒤로 한 주씩 옮긴다. delta 가 None 이면 이번 주로 돌아온다."""
+        if delta is None:
+            self.cal_offset = 0
+        else:
+            # 지난 주는 한 주까지만 (지난 일은 '지남' 카드가 챙긴다)
+            self.cal_offset = max(-1, getattr(self, "cal_offset", 0) + delta)
         self.refresh()
 
     def _pick_day(self, day):
