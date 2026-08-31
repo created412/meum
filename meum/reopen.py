@@ -74,20 +74,61 @@ def _open_brity(cfg: dict, subject: str, sender: str) -> Tuple[bool, str]:
     if target is None:
         return False, "브리티 목록에서 그 쪽지를 찾지 못했습니다.\n(오래되어 목록에서 밀려났을 수 있습니다)"
 
-    before = {h for h, _ in _visible(col)}
+    # 1) 이미 떠 있는 쪽지 창 가운데 있는가 — 그러면 앞으로만 가져오면 된다.
+    #    브리티는 이미 열려 있는 쪽지를 누르면 새 창을 띄우지 않고 그 창을 앞으로
+    #    올린다. 예전에는 그걸 모르고 '새 창' 만 기다리다 10초 뒤에
+    #    '쪽지 창이 열리지 않았습니다' 로 끝났다(실측).
+    for h in _brity_notes(col):
+        try:
+            det = col._read_detail(h)
+        except Exception:
+            continue
+        if det and (_norm(det.subject)[:24] == want or want in _norm(det.subject)):
+            _front(h)
+            return True, "브리티에서 원래 쪽지를 열었습니다."
+
+    before = set(_brity_notes(col))
+    fg_before = win32gui.GetForegroundWindow()
     l, t, r, b = target.rect
     col._click(l + (r - l) // 2, t + (b - t) // 2, double=True)
 
     deadline = time.time() + 10
     while time.time() < deadline:
-        time.sleep(0.4)
-        new = {h for h, _ in _visible(col)} - before
+        time.sleep(0.25)
+        new = set(_brity_notes(col)) - before
         if new:
             h = next(iter(new))
             time.sleep(0.6)
             _front(h)
             return True, "브리티에서 원래 쪽지를 열었습니다."
+        # 이미 열려 있던 창이 앞으로 나온 경우
+        fg = win32gui.GetForegroundWindow()
+        if fg != fg_before and fg in before:
+            _front(fg)
+            return True, "브리티에서 원래 쪽지를 열었습니다."
     return False, "쪽지 창이 열리지 않았습니다."
+
+
+def _brity_notes(col) -> list:
+    """
+    **브리티의** 쪽지 창만 골라낸다.
+
+    창 클래스가 Chrome_WidgetWin_1 이라 크롬 탭이나 일렉트론 앱 창까지 함께
+    걸린다. 그대로 두면 기다리는 사이에 선생님이 크롬 창 하나만 새로 띄워도
+    그것을 '열린 쪽지' 로 알고 엉뚱한 창을 앞으로 가져왔다.
+    그래서 브리티 프로세스의 창만 남긴다.
+    """
+    import win32process
+    from .collector import brity_pids
+    pids = brity_pids()
+    out = []
+    for h, _t in _visible(col):
+        try:
+            if win32process.GetWindowThreadProcessId(h)[1] in pids:
+                out.append(h)
+        except Exception:
+            continue
+    return out
 
 
 def _visible(col):
