@@ -19,7 +19,7 @@ from meum import config, extractor as E   # noqa: E402
 
 RECEIVED = datetime(2026, 8, 21, 15, 0)
 
-REAL = """선생님 안녕하세요~ 학생안전부 강주은입니다.
+REAL = """선생님 안녕하세요~ 학생안전부 이서연입니다.
 
 1. [제출] 2학기 학급 자치회 조직도
 다음주 금요일(8/28) 6교시는 2학기 학급회 조직시간입니다.
@@ -48,7 +48,7 @@ def check(label, ok, note=""):
 
 def run(body):
     ex = E.build(config.DEFAULTS)
-    return ex.extract(subject="", body=body, sender="강주은", sender_org="학생안전부",
+    return ex.extract(subject="", body=body, sender="이서연", sender_org="학생안전부",
                       received_at=RECEIVED)
 
 

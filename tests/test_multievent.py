@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""한 쪽지에 여러 일정이 나열된 경우 검증 (실제 수집된 최은석 쪽지)."""
+"""한 쪽지에 여러 일정이 나열된 경우 검증 (실제 수집된 김도현 쪽지)."""
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -42,7 +42,7 @@ EXPECT = {
 
 def main():
     tasks = ex.extract(subject="수리과학부 8,9월 예정 행사 안내", body=BODY,
-                       sender="최은석", sender_org="", received_at=RECV)
+                       sender="김도현", sender_org="", received_at=RECV)
     print(f"추출 {len(tasks)}건\n")
     got = {}
     for t in tasks:
