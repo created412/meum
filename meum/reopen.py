@@ -296,6 +296,89 @@ def _peek_row(col, y: int, timeout: float = 6.0):
     return None, None, False
 
 
+# --------------------------------------------------------------------------
+# 줄 생김새 기억하기 (쪽지함 목록은 글자로 읽을 수 없다)
+#
+# GOE 쪽지함은 UI Automation 도 MSAA 도 자식을 하나도 내주지 않는다(실측).
+# 어느 줄이 무슨 쪽지인지 아는 길은 '열어 보는 것' 뿐이라, 맞는 줄을 찾을
+# 때까지 창이 여러 번 떴다 사라졌다.
+#
+# 그런데 줄의 **생김새**는 화면에서 그대로 읽을 수 있다. 한 번 열어 보고
+# 나면 '이 줄은 그 쪽지' 라고 지문을 남겨 둔다. 다음부터는 지문만 맞춰
+# 곧바로 그 줄을 누르므로 창이 한 번만 뜬다.
+#
+# 실측: 같은 줄을 1초 간격으로 찍어도 지문 차이 0, 서로 다른 줄은 모두
+# 구별되었다.
+THUMB_KEY = "goe_thumbs"
+FP_W, FP_H = 32, 8              # 지문 크기 (256칸)
+FP_NEAR = 26                    # 이만큼 이내면 같은 줄로 본다
+
+
+def _grab_list(col):
+    """쪽지함 목록을 그림으로 뜬다. 실패하면 None."""
+    try:
+        from PIL import ImageGrab
+        l, t, r, b = win32gui.GetWindowRect(col.list_hwnd)
+        if r - l < 40 or b - t < 40:
+            return None
+        return ImageGrab.grab(bbox=(l, t, r, b), all_screens=True)
+    except Exception:
+        return None
+
+
+def _row_fp(img, row: int) -> str:
+    """한 줄의 생김새를 256칸 지문으로 줄인다."""
+    from .goe_collector import ROW_H
+    try:
+        box = (0, 30 + row * ROW_H, img.width, 30 + (row + 1) * ROW_H)
+        if box[3] > img.height:
+            return ""
+        g = img.crop(box).convert("L").resize((FP_W, FP_H))
+        px = list(g.getdata())
+        avg = sum(px) / len(px)
+        return "".join("1" if v > avg else "0" for v in px)
+    except Exception:
+        return ""
+
+
+def _fp_dist(a: str, b: str) -> int:
+    if not a or not b or len(a) != len(b):
+        return 10 ** 6
+    return sum(1 for x, y in zip(a, b) if x != y)
+
+
+def _load_thumbs() -> dict:
+    import json
+    try:
+        from .state import State
+        st = State()
+        try:
+            raw = st.get_meta(THUMB_KEY)
+            d = json.loads(raw) if raw else {}
+            return d if isinstance(d, dict) else {}
+        finally:
+            st.close()
+    except Exception:
+        return {}
+
+
+def _save_thumbs(d: dict) -> None:
+    import json
+    if not d:
+        return
+    try:
+        from .state import State
+        st = State()
+        try:
+            # 너무 불어나지 않게 최근 400건만 남긴다
+            items = list(d.items())[-400:]
+            st.set_meta(THUMB_KEY, json.dumps(dict(items)))
+        finally:
+            st.close()
+    except Exception:
+        pass
+
+
 def _scroll_to_top(col) -> None:
     """
     쪽지함을 맨 위로 올린다.
@@ -338,6 +421,10 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
     col = GoeCollector(cfg, log=lambda s: None)
     col.attach()
 
+    # 더블클릭하셨으면 **일단 메신저부터 눈앞에 떠야 한다** (브리티와 같게).
+    # 쪽지를 찾는 일은 그 다음이다. 못 찾더라도 메신저는 이미 떠 있다.
+    _front(col.hwnd)
+
     # 1) 이미 떠 있는 쪽지 창 가운데 있는가 — 클릭조차 필요 없다
     for h in list(_visible_notes()):
         try:
@@ -375,13 +462,42 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
     if rank is not None and rank >= n_rows:
         pages = min(8, rank // n_rows + 3)
 
+    # 지문으로 '그 줄' 을 바로 짚어 본다. 맞으면 창이 한 번만 뜬다.
+    thumbs = _load_thumbs()
+    want_fp = thumbs.get(msg_id, "")
+    fp_row = None
+    img = _grab_list(col)
+    row_fps = {}
+    if img:
+        for rw in range(n_rows):
+            fp = _row_fp(img, rw)
+            if fp:
+                row_fps[rw] = fp
+        if want_fp:
+            best, bd = None, 10 ** 6
+            for rw, fp in row_fps.items():
+                d = _fp_dist(want_fp, fp)
+                if d < bd:
+                    best, bd = rw, d
+            if best is not None and bd <= FP_NEAR:
+                fp_row = best
+
     scrolled = 0
     opened = None
+    learned = {}            # 이번에 알아낸 {쪽지열쇠: 줄 지문}
+    # 오래 뒤지지 않는다. 메신저는 이미 떠 있으므로, 이 시간 안에 못
+    # 찾으면 손을 떼고 선생님께 맡긴다 (예전엔 최대 150초까지 깜빡였다).
+    give_up_at = time.time() + 5.0
     try:
         for page in range(pages):
             todo = _near_first(rank if page == 0 else None, n_rows)
+            if page == 0 and fp_row is not None:
+                todo = [fp_row] + [x for x in todo if x != fp_row]
             tried = set()
             while todo:
+                if time.time() > give_up_at:
+                    todo = []
+                    break
                 row = todo.pop(0)
                 if row in tried or not (0 <= row < n_rows):
                     continue
@@ -404,6 +520,8 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
                     opened = None
                     continue
                 key = _goe_key(body)
+                if page == 0 and row in row_fps:
+                    learned[key] = row_fps[row]
                 if key == msg_id:
                     _unpark(h, home)          # 원래 자리로 돌려놓고
                     _front(h)                 # 그때 처음으로 화면에 보인다
@@ -420,6 +538,8 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
                     if 0 <= jump < n_rows and jump not in tried:
                         todo.insert(0, jump)
 
+            if time.time() > give_up_at:
+                break
             if page < pages - 1:
                 col.scroll(3)
                 scrolled += 3
@@ -430,6 +550,11 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
                 col._close(opened)
             except Exception:
                 pass
+        # 알아낸 줄 지문을 남긴다 — 다음엔 그 줄을 바로 누른다
+        if learned:
+            thumbs.update(learned)
+            _save_thumbs(thumbs)
+
         # 내려놓은 목록은 맨 위로 되돌려 둔다.
         # (원래 보시던 자리까지 정확히 되돌릴 방법이 없다. 맨 위가
         #  쪽지함의 기본 자리이므로 그 자리로 둔다)
@@ -439,8 +564,11 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
             except Exception:
                 pass
 
-    return False, ("GOE 쪽지함에서 그 쪽지를 찾지 못했습니다.\n"
-                   "(지우셨거나 쪽지함에서 삭제되었을 수 있습니다)")
+    # 쪽지를 못 찾아도 빈손으로 끝내지 않는다 — GOE메신저를 앞으로
+    # 띄워 드린다. 더블클릭했으면 어쨌든 메신저가 눈앞에 떠야 한다.
+    _front(col.hwnd)
+    return True, ("그 쪽지를 바로 찾지 못해 GOE메신저를 열어 드렸습니다. "
+                  "쪽지함에서 확인해 주세요.")
 
 
 # --------------------------------------------------------------------------

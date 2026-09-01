@@ -531,7 +531,14 @@ class GoeCollector:
                         progress(seen_rows, f"GOE 쪽지 {seen_rows + 1}번째 확인 중")
                     seen_rows += 1
 
-                    body = self._open_row(top + row * pitch)
+                    # row_metrics 의 top 은 **창 안** 좌표다. _open_row 는
+                    # **화면** 좌표를 받아 안에서 창 안 좌표로 되변환한다.
+                    # 창 안 좌표를 그대로 주면 변환이 이중으로 일어나
+                    # 화면 밖(음수)을 누르게 되고, 한 줄도 안 열려
+                    # '3번째 줄부터 열리지 않아' 로 수집이 통째로 멈췄다(실측).
+                    # 목록 창의 화면 위치를 더해 화면 좌표로 만들어 준다.
+                    _sl, _st, _sr, _sb = win32gui.GetWindowRect(self.list_hwnd)
+                    body = self._open_row(_st + top + row * pitch)
                     if not body:
                         misses += 1
                         # 잇달아 못 읽으면 목록 끝으로 본다.
