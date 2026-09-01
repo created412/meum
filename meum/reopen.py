@@ -379,6 +379,166 @@ def _save_thumbs(d: dict) -> None:
         pass
 
 
+# --------------------------------------------------------------------------
+# 쪽지함 검색으로 곧장 찾기 (엔터 제출)
+#
+# GOE 쪽지함은 목록을 글자로 읽을 수 없어(UIA·MSAA 모두 자식 0개), 줄을
+# 하나하나 열어 봐야 했다. 대신 쪽지함의 검색(내용)에 본문 낱말 하나를
+# 넣으면 목록이 그 쪽지로 좁혀져 **창이 한 번만 뜬다**.
+#
+# 어렵게 배운 것들 (전부 실측):
+#  · 검색줄은 알림/수신함/발신함 층마다 있어 겹친다. 검색어 칸(넓다,
+#    ~99px)에만 넣는다 — 범주 칸(~65px)에 부으면 범주가 망가진다.
+#  · 검색 단추는 여섯 개가 겹쳐 있고 죽은 층 것을 누르면 화면이 엉뚱한
+#    층으로 넘어간다. 단추는 아예 안 쓰고 **엔터로 제출한다**.
+#  · 글자는 WM_CHAR 로 들어간다. 지우기는 백스페이스가 안 먹고
+#    **Ctrl+A(WM_CHAR 1) 뒤 덮어쓰기**만 된다.
+#  · 검색·비우기 뒤에는 화면이 다른 층에 갇힐 수 있다. 쪽지함 탭과
+#    수신함 단추를 마우스 메시지로 눌러 **시야를 복구**해야 한다.
+#  · 끝나면 반드시 검색어를 비운다. 안 그러면 선생님 쪽지함이 걸러진
+#    채로 남는다.
+# 전부 메시지 방식이라 진짜 마우스·키보드는 건드리지 않는다.
+
+
+def _mclick(h) -> None:
+    try:
+        r = win32gui.GetWindowRect(h)
+        lx, ly = win32gui.ScreenToClient(h, ((r[0]+r[2])//2, (r[1]+r[3])//2))
+        lp = win32api.MAKELONG(lx, ly)
+        win32gui.PostMessage(h, win32con.WM_LBUTTONDOWN, win32con.MK_LBUTTON, lp)
+        win32gui.PostMessage(h, win32con.WM_LBUTTONUP, 0, lp)
+        time.sleep(0.15)
+    except Exception:
+        pass
+
+
+def _goe_search_parts(col):
+    """(검색어 칸들, 시야 복구용 탭들) 을 찾는다."""
+    wl, wt, wr, wb = win32gui.GetWindowRect(col.hwnd)
+    kws, tabs_note, tabs_inbox = [], [], []
+
+    def cb(h, _):
+        try:
+            r = win32gui.GetWindowRect(h)
+            cls = win32gui.GetClassName(h)
+            txt = win32gui.GetWindowText(h).strip()
+        except Exception:
+            return True
+        if cls == "UltariChildEdit" and wt + 90 <= r[1] <= wt + 150            and r[2] - r[0] >= 80:
+            kws.append(h)
+        elif cls == "Button" and txt == "쪽지함":
+            tabs_note.append(h)
+        elif cls == "Button" and txt == "수신함":
+            tabs_inbox.append(h)
+        return True
+
+    try:
+        win32gui.EnumChildWindows(col.hwnd, cb, None)
+    except Exception:
+        pass
+    return kws, tabs_note + tabs_inbox
+
+
+def _goe_submit(col, kws, tabs, text: str) -> None:
+    """검색어를 넣고 엔터로 제출한 뒤 시야를 수신함으로 복구한다."""
+    for k in kws:
+        _mclick(k)
+        win32gui.PostMessage(k, win32con.WM_CHAR, 1, 0)      # Ctrl+A
+        time.sleep(0.08)
+        if not text:
+            win32gui.PostMessage(k, win32con.WM_CHAR, 8, 0)
+            time.sleep(0.1)
+        for ch in text:
+            win32gui.PostMessage(k, win32con.WM_CHAR, ord(ch), 0)
+            time.sleep(0.03)
+        win32gui.PostMessage(k, win32con.WM_KEYDOWN, win32con.VK_RETURN, 0)
+        win32gui.PostMessage(k, win32con.WM_KEYUP, win32con.VK_RETURN, 0)
+        win32gui.PostMessage(k, win32con.WM_CHAR, 13, 0)
+        time.sleep(0.7)
+    for h in tabs:
+        _mclick(h)
+        time.sleep(0.6)
+
+
+def _pick_keyword(msg_id: str) -> str:
+    """저장된 본문에서 검색어로 쓸 낱말 하나를 고른다 (구절은 안 걸린다)."""
+    try:
+        import re as _re
+        from .goe_collector import normalize
+        from .state import State
+        st = State()
+        try:
+            row = st.con.execute(
+                "SELECT subject, COALESCE(body_latest, body_raw, '') "
+                "FROM messages WHERE msg_id=?", (msg_id,)).fetchone()
+        finally:
+            st.close()
+        if not row:
+            return ""
+        text = (row[0] or "") + " " + normalize(row[1] or "")
+        words = _re.findall(r"[가-힣A-Za-z0-9]{4,12}", text)
+        common = {"선생님", "안녕하세요", "안녕하십니까", "부탁드립니다",
+                  "감사합니다", "안내드립니다", "드립니다", "바랍니다",
+                  "선생님들", "주시기", "합니다"}
+        words = [w for w in words if w not in common]
+        if not words:
+            return ""
+        # 흔한 낱말('김우영' 같은 이름)로 검색하면 같은 낱말을 담은 쪽지가
+        # 여럿 걸려 세 줄 안에 없을 수 있다(실측). **다른 쪽지에 가장 안
+        # 나오는 낱말**을 고른다 — 그 쪽지만의 낱말일수록 한 번에 맞는다.
+        uniq = list(dict.fromkeys(words))[:40]
+        st2 = State()
+        try:
+            def rarity(w):
+                return st2.con.execute(
+                    "SELECT COUNT(*) FROM messages WHERE source='goe' "
+                    "AND msg_id != ? AND (subject LIKE ? OR body_latest LIKE ?)",
+                    (msg_id, f"%{w}%", f"%{w}%")).fetchone()[0]
+            scored = sorted(uniq, key=lambda w: (rarity(w), -len(w)))
+        finally:
+            st2.close()
+        return scored[0]
+    except Exception:
+        return ""
+
+
+def _search_goe(col, msg_id: str) -> bool:
+    """검색으로 좁혀 그 쪽지를 연다. 성공하면 창을 앞에 두고 True."""
+    from .goe_collector import ROW_H
+    kws, tabs = _goe_search_parts(col)
+    keyword = _pick_keyword(msg_id)
+    if not (kws and tabs and keyword):
+        return False
+    found = None                       # (hwnd, 원래자리)
+    try:
+        _goe_submit(col, kws, tabs, keyword)
+        l, t, r, b = win32gui.GetWindowRect(col.list_hwnd)
+        for row in range(3):           # 좁혀졌으니 위쪽 세 줄이면 충분하다
+            h, home, is_new = _peek_row(col, t + 30 + row * ROW_H, timeout=2.5)
+            if h is None:
+                break
+            if not is_new:
+                continue
+            body = _read_body_wait(col, h)
+            if body and _goe_key(body) == msg_id:
+                found = (h, home)
+                break
+            col._close(h)
+            time.sleep(0.2)
+        return found is not None
+    except Exception:
+        return found is not None
+    finally:
+        # 걸러 둔 목록을 반드시 원래대로 (찾은 창은 화면 밖에 잠시 대기)
+        try:
+            _goe_submit(col, kws, tabs, "")
+        except Exception:
+            pass
+        if found:
+            _unpark(found[0], found[1])
+            _front(found[0])
+
+
 def _scroll_to_top(col) -> None:
     """
     쪽지함을 맨 위로 올린다.
@@ -434,7 +594,17 @@ def _open_goe(cfg: dict, msg_id: str, max_rows: int = 25) -> Tuple[bool, str]:
         except Exception:
             continue
 
-    # 2) 목록을 맨 위로 올린 뒤 예상 줄부터 확인한다.
+    # 2) 쪽지함 검색으로 곧장 좁혀 본다 — 창이 한 번만 뜬다.
+    #    검색이 빗나가면(같은 낱말 쪽지가 많거나 지워진 쪽지) 아래의
+    #    줄 훑기로 넘어가지 않고 메신저에 맡긴다 — 깜빡임을 늘리지 않는다.
+    kws_chk, tabs_chk = _goe_search_parts(col)
+    if kws_chk and tabs_chk and _pick_keyword(msg_id):
+        if _search_goe(col, msg_id):
+            return True, "GOE메신저에서 원래 쪽지를 열었습니다."
+        return True, ("그 쪽지를 바로 찾지 못해 GOE메신저를 열어 드렸습니다. "
+                      "쪽지함에서 확인해 주세요.")
+
+    # 3) (검색을 쓸 수 없을 때) 목록을 맨 위로 올린 뒤 예상 줄부터 확인한다.
     #
     #    쪽지함은 선생님이 보시던 자리에 스크롤되어 있을 수 있다. 그러면
     #    '맨 위가 최신' 이라는 전제가 깨져 저장해 둔 순서(rank)가 통째로
