@@ -46,40 +46,40 @@ def _front(hwnd: int) -> None:
 
 
 # --------------------------------------------------------------------------
+def _brity_scroll(col, notches: int) -> None:
+    """브리티 목록을 굴린다. 양수 = 위로."""
+    try:
+        from .collector import _find_first
+        lst = _find_first(col._root(),
+                          lambda x: x.ControlTypeName == "ListControl")
+        r = lst.BoundingRectangle
+        cx, cy = (r.left + r.right) // 2, (r.top + r.bottom) // 2
+        rh = col._renderer(col.hwnd)
+        delta = 120 if notches > 0 else -120
+        for _ in range(abs(int(notches))):
+            win32gui.PostMessage(rh, win32con.WM_MOUSEWHEEL,
+                                 win32api.MAKELONG(0, delta & 0xFFFF),
+                                 win32api.MAKELONG(cx, cy))
+            time.sleep(0.03)
+        time.sleep(0.6)
+    except Exception:
+        pass
+
+
 def _open_brity(cfg: dict, subject: str, sender: str) -> Tuple[bool, str]:
     from .collector import (BrityCollector, _find_all, _find_first,
                             wake_accessibility)
 
     col = BrityCollector(cfg, log=lambda s: None)
     col.attach()
-    col.ensure_restored() if hasattr(col, "ensure_restored") else None
-    col._ensure_note_tab()
 
     want = _norm(subject)[:24]
     if not want:
         return False, "찾을 제목이 없습니다."
 
-    root = col._root()
-    lst = _find_first(root, lambda x: x.ControlTypeName == "ListControl")
-    if lst is None:
-        return False, "브리티 쪽지 목록을 찾지 못했습니다."
-
-    target = None
-    for item in _find_all(lst, lambda x: x.ControlTypeName == "ListItemControl",
-                          maxdepth=6):
-        note = col._parse_list_item(item)
-        if not note:
-            continue
-        if _norm(note.preview)[:24] == want or want in _norm(note.preview):
-            target = note
-            break
-    if target is None:
-        return False, "브리티 목록에서 그 쪽지를 찾지 못했습니다.\n(오래되어 목록에서 밀려났을 수 있습니다)"
-
-    # 1) 이미 떠 있는 쪽지 창 가운데 있는가 — 그러면 앞으로만 가져오면 된다.
-    #    브리티는 이미 열려 있는 쪽지를 누르면 새 창을 띄우지 않고 그 창을 앞으로
-    #    올린다. 예전에는 그걸 모르고 '새 창' 만 기다리다 10초 뒤에
-    #    '쪽지 창이 열리지 않았습니다' 로 끝났다(실측).
+    # 1) 이미 떠 있는 쪽지 창부터 본다 — 본창을 깨울 필요조차 없다.
+    #    브리티는 이미 열려 있는 쪽지를 누르면 새 창을 띄우지 않고 그 창을
+    #    앞으로 올릴 뿐이라, 여기서 못 알아보면 아래에서 10초를 헛기다린다.
     for h in _brity_notes(col):
         try:
             det = col._read_detail(h)
@@ -89,9 +89,61 @@ def _open_brity(cfg: dict, subject: str, sender: str) -> Tuple[bool, str]:
             _front(h)
             return True, "브리티에서 원래 쪽지를 열었습니다."
 
-    # 창이 내려가 있으면 되살린다. 수집기 _open_once 와 같은 준비다.
+    # 2) 본창을 깨우고, **목록이 채워질 때까지 기다렸다가** 찾는다.
+    #
+    #    트레이에 숨어 있던 브리티를 깨우면 창이 먼저 검게 뜨고 목록은
+    #    한참 뒤에 채워진다. 예전에는 그 검은 창을 곧바로 읽어 '목록에서
+    #    그 쪽지를 찾지 못했습니다' 로 끝났다(실측 — 검은 창만 떴다가
+    #    아무 일도 안 일어나던 이유).
     col.ensure_restored()
+    col._ensure_note_tab()
     col._wait_no_detail()
+
+    # 목록은 선생님이 보시던 자리에 스크롤되어 있을 수 있다. 찾는 쪽지가
+    # 화면 밖(위나 아래)이면 못 찾은 것으로 끝났다(실측 — GOE 와 같은 병).
+    # 브리티 목록은 글자로 읽히므로, **맨 위로 올려 훑고 없으면 한 화면씩
+    # 내려가며 훑는다**. 창을 열지 않으니 깜빡임도 없다.
+    def scan():
+        lst = _find_first(col._root(),
+                          lambda x: x.ControlTypeName == "ListControl")
+        if lst is None:
+            return None, 0, ""
+        got, first = 0, ""
+        for item in _find_all(lst,
+                              lambda x: x.ControlTypeName == "ListItemControl",
+                              maxdepth=6):
+            note = col._parse_list_item(item)
+            if not note:
+                continue
+            got += 1
+            if got == 1:
+                first = _norm(note.preview)[:40]
+            if _norm(note.preview)[:24] == want or want in _norm(note.preview):
+                return note, got, first
+        return None, got, first
+
+    target = None
+    deadline = time.time() + 12.0
+    _brity_scroll(col, 40)               # 맨 위부터
+    prev_first = None
+    while time.time() < deadline:
+        target, parsed, first = scan()
+        if target is not None:
+            break
+        if parsed >= 3:
+            if first == prev_first:      # 더 내려가도 그대로면 바닥이다
+                break
+            prev_first = first
+            _brity_scroll(col, -6)       # 한 화면 아래로
+            continue
+        # 갓 깨어난 창 — 목록이 채워질 때까지 기다린다 (검은 창 문제)
+        wake_accessibility(col.hwnd)
+        time.sleep(0.7)
+
+    if target is None:
+        col.restore()                    # 우리가 깨운 창이면 도로 넣어 둔다
+        return False, ("브리티 목록에서 그 쪽지를 찾지 못했습니다." + chr(10)
+                       + "(오래되어 목록에서 밀려났을 수 있습니다)")
 
     before = set(_brity_notes(col))
     fg_before = win32gui.GetForegroundWindow()
@@ -122,6 +174,7 @@ def _open_brity(cfg: dict, subject: str, sender: str) -> Tuple[bool, str]:
         if fg != fg_before and fg in before:
             _front(fg)
             return True, "브리티에서 원래 쪽지를 열었습니다."
+    col.restore()                        # 우리가 깨운 창이면 도로 넣어 둔다
     return False, "쪽지 창이 열리지 않았습니다."
 
 
