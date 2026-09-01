@@ -7,6 +7,8 @@
   · 회색 바탕 위에 흰 카드 — 카드 왼쪽 색 띠가 급한 정도를 나타낸다
       진빨강=기한 지남 · 빨강=오늘 · 주황=내일 · 호박=이번 주 · 파랑=그 뒤
   · 날짜 머리글에는 D-day 배지, 패널 머리에는 지남/오늘 개수 배지
+  · 빨간 '오늘 처리' 판과 알람은 **오늘 것만** 다룬다
+    (지난 일은 목록 맨 아래 '지난 일' 에 접어 둔다. 지우지는 않는다)
   · 네모(☐) 클릭 = 완료, 두 번 클릭 = 원래 쪽지 열기
 
 로그인하면 자동으로 뜬다(설치 시 시작 프로그램 등록). 이미 떠 있으면 중복 실행하지 않는다.
@@ -551,7 +553,10 @@ class Widget:
 
           · 마감 1시간 전(설정 가능)   → 한 번
           · 마감 시각이 지났는데 미완료 → 알리고, 이후 2시간마다 반복
-          · 어제까지 마감이었는데 남음  → 2시간마다 반복 (깜빡한 것)
+
+        **지난 날짜 것은 알리지 않는다.** 어제 것까지 두 시간마다 계속
+        뜨면 정작 오늘 알람이 묻힌다. 지난 일은 목록 맨 아래 '지난 일'
+        에 접혀 있다(지우지는 않는다).
 
         완료 체크하면 그 항목의 알람은 멈춘다.
         """
@@ -574,7 +579,7 @@ class Widget:
             if not da:
                 continue
             d = date.fromisoformat(da[:10])
-            if d > today:
+            if d != today:          # 오늘 것만 알린다
                 continue
             dt = (datetime.fromisoformat(da) if "T" in da
                   else datetime.combine(d, _t(17, 0)))
@@ -586,10 +591,7 @@ class Widget:
                         or (now - st["last"]).total_seconds() >= repeat * 60)
 
             stage = None
-            if d < today:
-                if elapsed():
-                    stage = "지남"
-            elif now >= dt:
+            if now >= dt:
                 if "due" not in st["stages"] or elapsed():
                     stage = "마감"
                     st["stages"].add("due")
@@ -853,7 +855,7 @@ class Widget:
             self._events = [e for e in events
                             if e["start_date"] <= want <= (e["end_date"] or e["start_date"])]
 
-        # ── 오늘 배너: 오늘 마감 + 깜빡한 것(지남)을 맨 위에 빨갛게 ──
+        # ── 오늘 배너: 오늘 마감인 것만 맨 위에 빨갛게 ──
         self._today_banner(rows)
 
         if not rows and not (self.day_filter and self._events):
@@ -881,7 +883,10 @@ class Widget:
     def _today_banner(self, rows: List[dict]):
         """
         '오늘 당장 뭘 해야 하나'를 목록 맨 위에 빨간 판으로 박아 둔다.
-        지나간 마감(깜빡한 것)도 여기 함께 올라온다.
+
+        **오늘 마감인 것만** 올린다. 지난 것은 올리지 않는다 —
+        지난 것까지 빨갛게 쌓이면 정작 오늘 할 일이 묻힌다.
+        지난 일은 목록 맨 아래 '지난 일' 에 접혀 있다(지우지는 않는다).
         """
         today = date.today()
         urgent = []
@@ -889,7 +894,7 @@ class Widget:
             if not r.get("due_at"):
                 continue
             d = date.fromisoformat(r["due_at"][:10])
-            if d <= today:
+            if d == today:
                 urgent.append((d, r))
         if not urgent:
             return
@@ -900,15 +905,7 @@ class Widget:
         card = tk.Frame(outer, bg=TODAY_C)
         card.pack(fill="x")
 
-        n_over = sum(1 for d, _ in urgent if d < today)
-        n_today = len(urgent) - n_over
-        head_txt = "🔔 오늘 처리"
-        bits = []
-        if n_today:
-            bits.append(f"오늘 {n_today}건")
-        if n_over:
-            bits.append(f"깜빡한 것 {n_over}건")
-        tk.Label(card, text=f"{head_txt}  ·  {' · '.join(bits)}",
+        tk.Label(card, text=f"🔔 오늘 처리  ·  {len(urgent)}건",
                  font=self.f["day"], bg=TODAY_C, fg="white")\
             .pack(anchor="w", padx=12, pady=(8, 4))
 
@@ -919,8 +916,6 @@ class Widget:
             line.pack(fill="x", pady=1)
             due = r["due_at"] or ""
             when = due[11:16] if "T" in due else "종일"
-            if d < today:
-                when = f"{d.month}/{d.day}"
             box = tk.Label(line, text="☐", font=self.f["item"], bg=TODAY_C,
                            fg="#fecaca", cursor="hand2")
             box.pack(side="left")
