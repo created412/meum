@@ -51,7 +51,7 @@ DEFAULTS = {
     "report_endpoint": ("https://docs.google.com/forms/d/e/"
                         "1FAIpQLSdftAbY1ZZcO-NYV3-3M5sXDYTC9VBtSBY-jsqWpN7OSMEeKA"
                         "/formResponse"),
-    "report_field": "entry.626085282",
+    "report_field": "entry.747927885",
     "report_to": "이재영 선생님",     # 보고서를 받을 사람 (화면 문구에 쓰인다)
 
     # --- 오늘 마감 알람 (깜빡함 방지) ---

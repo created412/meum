@@ -337,6 +337,22 @@ def send_report(text: str, endpoint: str = "") -> tuple:
             field = config.DEFAULTS.get("report_field", "")
         else:
             field = config.load().get("report_field", "")
+
+        # 폼을 고치면 칸 번호(entry)가 바뀐다. 낡은 번호로 보내면 구글이
+        # **아무 말 없이 빈 응답으로** 받아 버린다 — 실제로 다섯 분의
+        # 보고서가 그렇게 사라졌다. 보내기 직전에 폼 페이지를 한 번 읽어
+        # 지금 번호를 직접 확인하고, 읽지 못하면 저장된 번호를 쓴다.
+        try:
+            import re as _re
+            view = _re.sub(r"/(formResponse|viewform).*$", "/viewform", endpoint)
+            req0 = urllib.request.Request(
+                view, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req0, timeout=8) as r0:
+                live = _find_entry_id(r0.read().decode("utf-8", "replace"))
+            if live:
+                field = live
+        except Exception:
+            pass
         if not field:
             return False, "보낼 칸이 정해져 있지 않습니다."
         data = urllib.parse.urlencode({field: text[:60000]}).encode("utf-8")
@@ -405,13 +421,27 @@ def _find_entry_id(html: str):
     if m:
         return m.group(1)
 
-    # 2) 요즘 폼은 FB_PUBLIC_LOAD_DATA_ 안에 번호만 들어 있다.
-    #    질문 묶음이 [번호, "질문", ...] 꼴이라 첫 번째 큰 번호를 쓴다.
+    # 2) 요즘 폼은 FB_PUBLIC_LOAD_DATA_ 안에 번호가 들어 있다.
+    #
+    #    ★ 함정 ★ 질문 묶음은 [질문번호, "질문", …, [[입력칸번호, …]]] 꼴이라
+    #    **바깥의 첫 큰 숫자는 질문 번호(item id)이지 입력 칸(entry)이 아니다.**
+    #    예전에 '첫 번째 큰 번호'를 집었다가 질문 번호로 보내는 바람에,
+    #    구글이 아무 말 없이 빈 응답으로 받아 다섯 분의 보고서가 통째로
+    #    사라졌다(실측). 반드시 안쪽 구조를 따라가 입력 칸 번호를 꺼낸다.
     m = re.search(r"FB_PUBLIC_LOAD_DATA_\s*=\s*(.+?);\s*</script>", html, re.S)
     if m:
-        nums = re.findall(r"\[(\d{6,}),", m.group(1))
-        if nums:
-            return f"entry.{nums[0]}"
+        try:
+            import json as _json
+            data = _json.loads(m.group(1))
+            for item in (data[1][1] or []):
+                try:
+                    entry = item[4][0][0]      # [질문번호, "질문", …, [[입력칸, …]]]
+                    if isinstance(entry, int):
+                        return f"entry.{entry}"
+                except Exception:
+                    continue
+        except Exception:
+            pass
     return None
 
 
