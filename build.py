@@ -45,8 +45,37 @@ def main() -> int:
         if d.exists():
             shutil.rmtree(d, ignore_errors=True)
 
+    # 파일 속성(버전 정보)을 넣는다.
+    #
+    # 서명 없는 낯선 exe 는 백신(V3 등)의 평판 검사에 계속 걸린다.
+    # 서명을 살 수는 없지만, 제작자·제품명·버전이 담긴 속성이라도 넣으면
+    # '정체불명 파일' 취급이 줄어든다. (완전한 해결은 코드 서명뿐이며,
+    # 각 PC 에서 V3 예외 등록을 안내하는 것과 함께 쓴다)
+    from meum import __version__ as VER
+    nums = (VER.split(".") + ["0", "0", "0"])[:3]
+    vtuple = ", ".join(nums + ["0"])
+    version_file = BUILD / "version_info.txt"
+    BUILD.mkdir(parents=True, exist_ok=True)
+    version_file.write_text(f'''
+VSVersionInfo(
+  ffi=FixedFileInfo(filevers=({vtuple}), prodvers=({vtuple})),
+  kids=[
+    StringFileInfo([StringTable('040904B0', [
+      StringStruct('CompanyName', '이재영 (양지고등학교)'),
+      StringStruct('FileDescription', '메움 - 메신저에서 놓친 업무를 메워드립니다'),
+      StringStruct('FileVersion', '{VER}'),
+      StringStruct('ProductName', '메움 (Meum)'),
+      StringStruct('ProductVersion', '{VER}'),
+      StringStruct('LegalCopyright', 'MIT License · github.com/created412/meum'),
+      StringStruct('OriginalFilename', '메움.exe')])]),
+    VarFileInfo([VarStruct('Translation', [1042, 1200])])
+  ]
+)
+''', encoding="utf-8")
+
     args = [
         sys.executable, "-m", "PyInstaller",
+        "--version-file", str(version_file),
         "--name", NAME,
         "--noconsole",              # 검은 콘솔 창 안 뜨게
         "--noconfirm",

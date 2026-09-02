@@ -192,6 +192,7 @@ class Widget:
         self._build()
         self._place()
         self._show_in_taskbar()
+        self.root.bind("<Configure>", self._on_configure)
         self.refresh()
         self.root.after(8000, self._check_alarms)   # 켜지고 잠시 뒤 첫 점검
         self.root.after(REFRESH_MS, self._tick)
@@ -349,6 +350,33 @@ class Widget:
             self.cfg = config.update(widget_x=nx, widget_y=ny)
         self.root.geometry(f"{w}x{h}+{nx}+{ny}")
 
+    def _on_configure(self, e):
+        """가장자리를 끌어 크기가 바뀌면, 조금 있다가 저장하고 다시 그린다."""
+        if e.widget is not self.root:
+            return
+        w, h = self.root.winfo_width(), self.root.winfo_height()
+        if (w, h) == getattr(self, "_last_wh", None):
+            return
+        self._last_wh = (w, h)
+        if getattr(self, "_cfg_job", None):
+            try:
+                self.root.after_cancel(self._cfg_job)
+            except Exception:
+                pass
+
+        def save():
+            self._cfg_job = None
+            w2, h2 = self.root.winfo_width(), self.root.winfo_height()
+            if w2 == int(self.cfg.get("widget_width", 380)) and                h2 == int(self.cfg.get("widget_height", 0) or 0):
+                return
+            l, t, r, b = _work_area()
+            self.cfg = config.update(
+                widget_width=w2,
+                widget_height=(0 if h2 >= (b - t) - 8 else h2))
+            self.refresh()               # 줄바꿈 폭을 새 넓이에 맞춘다
+
+        self._cfg_job = self.root.after(450, save)
+
     # ---- 크기 조절 (오른쪽 아래 ⇲ 손잡이) ----
     def _resize_start(self, e):
         self._rs = (e.x_root, e.y_root,
@@ -493,9 +521,19 @@ class Widget:
             hwnd = self._hwnd()
             ex = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
             ex = (ex & ~win32con.WS_EX_TOOLWINDOW) | win32con.WS_EX_APPWINDOW
+            # 가장자리 아무 데나 잡고 끌어 크기를 바꿀 수 있게 한다.
+            # 테두리 없는 창이라도 WS_THICKFRAME 을 켜면 윈도우가
+            # 가장자리 판정과 끌기를 직접 해 준다 (제목줄만 없는 보통 창).
+            st_ = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+            st_ |= win32con.WS_THICKFRAME
             win32gui.ShowWindow(hwnd, win32con.SW_HIDE)
+            win32gui.SetWindowLong(hwnd, win32con.GWL_STYLE, st_)
             win32gui.SetWindowLong(hwnd, win32con.GWL_EXSTYLE, ex)
             win32gui.ShowWindow(hwnd, win32con.SW_SHOWNA)
+            try:
+                self.root.minsize(320, 420)
+            except Exception:
+                pass
         except Exception:
             pass
 
