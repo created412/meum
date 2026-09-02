@@ -218,6 +218,7 @@ class Widget:
         btns = tk.Frame(row1, bg=HEAD_BG)
         btns.pack(side="right")
         for txt, cmd, tip in (("✕", self._close_panel, None),
+                              ("―", self._minimize_panel, None),
                               ("📌", self._toggle_pin, None),
                               ("↻", self.refresh, None),
                               ("📅", self._open_calendar, None)):
@@ -355,6 +356,42 @@ class Widget:
         self.cfg = config.update(widget_x=self.root.winfo_x(),
                                  widget_y=self.root.winfo_y())
 
+    def _minimize_panel(self):
+        """
+        패널을 작업표시줄로 내린다.
+
+        창을 없애는 것이 아니라 **내려 두는 것**이다 — 새 쪽지 감시와
+        자동 정리는 그대로 돈다. 다시 보려면 작업표시줄의 메움 단추를
+        누르면 되고, 메신저를 새로 켜면 스스로 올라온다.
+
+        테두리 없는 창이라 tkinter 의 iconify() 는 거부한다(실측:
+        "can't iconify" 오류). 윈도우에 직접 부탁하면 된다.
+        """
+        try:
+            import win32con
+            win32gui.ShowWindow(self._hwnd(), win32con.SW_MINIMIZE)
+            self._gs_note = "패널을 내려 두었습니다 · 새 쪽지는 계속 지켜봅니다"
+            self._paint_status()
+        except Exception:
+            try:
+                self.root.withdraw()
+            except Exception:
+                pass
+
+    def _restore_panel(self):
+        """내려 둔 패널을 다시 올린다 (내려가 있지 않으면 아무 일 없음)."""
+        try:
+            import win32con
+            hwnd = self._hwnd()
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+        except Exception:
+            pass
+        try:
+            self.root.deiconify()
+        except Exception:
+            pass
+
     def _close_panel(self):
         """
         닫기 전에 한 번 여쭙는다.
@@ -434,6 +471,8 @@ class Widget:
         try:
             import win32con
             hwnd = self._hwnd()
+            if win32gui.IsIconic(hwnd):
+                return                  # 일부러 내려 두신 것 — 건드리지 않는다
             ex = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
             if not (ex & win32con.WS_EX_TOPMOST):
                 self.root.attributes("-topmost", True)
@@ -493,7 +532,7 @@ class Widget:
         # '브리티를 켜면 메움도 보인다'가 이 프로그램의 약속이다.
         if "켜졌습니다" in (reason or ""):
             try:
-                self.root.deiconify()
+                self._restore_panel()
                 self.root.lift()
                 if not self.cfg.get("widget_always_on_top", False):
                     self.root.attributes("-topmost", True)
