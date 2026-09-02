@@ -1,0 +1,42 @@
+# 판올림 태그를 밀면 깃허브가 같은 설치본을 스스로 빌드한다.
+#
+# 왜 필요한가:
+#  1. 누구나 '배포된 exe = 이 소스' 를 검증할 수 있다 (투명성)
+#  2. 코드 서명(SignPath Foundation 무료 OSS 서명)은 CI 에서 만든
+#     산출물에만 서명해 준다 — 이 워크플로가 그 전제 조건이다
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x86      # 배포본과 같은 32비트 (학교 구형 PC 호환)
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Build
+        run: python build.py
+
+      - name: Package
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "dist/메움" -DestinationPath "Meum-win64.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Meum-${{ github.ref_name }}
+          path: Meum-win64.zip
