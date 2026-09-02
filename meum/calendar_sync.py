@@ -261,7 +261,7 @@ class GoogleBackend:
                 if not cs:
                     raise CalendarError(
                         "Google 인증 파일(client_secret.json)이 없습니다.\n"
-                        "설치 마법사에서 Google 캘린더 연결을 먼저 진행해 주세요.")
+                        "처음 설정 화면(메움.exe --setup)에서 Google 캘린더 연결을 먼저 진행해 주세요.")
                 flow = InstalledAppFlow.from_client_secrets_file(str(cs), self.SCOPES)
                 creds = flow.run_local_server(
                     port=0, prompt="consent",

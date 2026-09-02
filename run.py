@@ -2,8 +2,8 @@
 """
 메움 — 메신저에서 놓친 선생님들의 업무를 메워드립니다.
 
-    메움.exe                 처음이면 설치 마법사, 이후엔 할 일 패널
-    메움.exe --setup         설치 마법사 다시 열기
+    메움.exe                 처음이면 안내 화면, 이후엔 할 일 패널
+    메움.exe --setup         처음 설정 화면 다시 열기
     메움.exe --widget        바탕화면 할 일 패널 (기본과 같음)
     메움.exe --collect       지금 당장 쪽지 정리 (확인 창을 띄움)
     메움.exe --calendar      달력
@@ -141,7 +141,7 @@ def main() -> int:
                                 description="메움 — 메신저에서 놓친 선생님들의 업무를 메워드립니다")
     p.add_argument("--trigger", default="manual",
                    choices=["manual", "daily", "logon", "extra", "watch"])
-    p.add_argument("--setup", action="store_true", help="설치 마법사 열기")
+    p.add_argument("--setup", action="store_true", help="처음 설정 화면 열기")
     p.add_argument("--headless", action="store_true", help="확인 창 없이 실행")
     p.add_argument("--list-only", action="store_true", help="목록만 읽고 종료")
     p.add_argument("--status", action="store_true", help="실행 이력 확인")
