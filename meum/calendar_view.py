@@ -65,6 +65,46 @@ def _month_range(y: int, m: int):
     return first, last, start, end
 
 
+def ask_text(parent, title: str, label: str):
+    """
+    한 줄 입력창. simpledialog 는 '항상 위' 패널 뒤에 숨어 버려
+    아무 일도 안 일어난 것처럼 보였다(실측). 맨 위로 띄운다.
+    """
+    win = tk.Toplevel(parent)
+    win.title(title)
+    win.attributes("-topmost", True)
+    win.transient(parent)
+    win.resizable(False, False)
+    try:
+        px, py = parent.winfo_rootx(), parent.winfo_rooty()
+        win.geometry(f"+{max(40, px - 40)}+{max(40, py + 120)}")
+    except Exception:
+        pass
+    body = tk.Frame(win, bg="white", padx=16, pady=12)
+    body.pack(fill="both", expand=True)
+    tk.Label(body, text=label, bg="white", anchor="w").pack(fill="x")
+    var = tk.StringVar()
+    ent = tk.Entry(body, textvariable=var, width=34)
+    ent.pack(fill="x", pady=(6, 10))
+    out = {"v": None}
+
+    def ok(_=None):
+        out["v"] = var.get()
+        win.destroy()
+
+    btns = tk.Frame(body, bg="white")
+    btns.pack(fill="x")
+    tk.Button(btns, text="저장", width=8, command=ok).pack(side="right")
+    tk.Button(btns, text="취소", width=8,
+              command=win.destroy).pack(side="right", padx=(0, 6))
+    ent.bind("<Return>", ok)
+    win.bind("<Escape>", lambda e: win.destroy())
+    ent.focus_force()
+    win.grab_set()
+    win.wait_window()
+    return out["v"]
+
+
 class CalendarWindow:
     def __init__(self, master: Optional[tk.Misc] = None):
         _dpi()
@@ -282,11 +322,31 @@ class CalendarWindow:
             tk.Label(cell, text=f"+{len(items)-3}", font=self.f["item"],
                      bg=bg, fg=MUTED, anchor="w").pack(fill="x", padx=5)
 
+        # 한 번 클릭은 화면을 다시 그린다. 그 순간 이 칸이 사라져서
+        # '두 번 클릭'이 영영 성립하지 않았다(실측 — 눌러도 안 되던 이유).
+        # 한 번 클릭을 잠깐 미뤄 두고, 그 사이 두 번째 클릭이 오면
+        # 미룬 것을 물리고 메모 창을 연다.
         def pick(_=None, day=d):
-            self.selected = day
-            self.refresh()
+            if getattr(self, "_click_job", None):
+                try:
+                    self.root.after_cancel(self._click_job)
+                except Exception:
+                    pass
+
+            def later():
+                self._click_job = None
+                self.selected = day
+                self.refresh()
+
+            self._click_job = self.root.after(280, later)
 
         def memo(_=None, day=d):
+            if getattr(self, "_click_job", None):
+                try:
+                    self.root.after_cancel(self._click_job)
+                except Exception:
+                    pass
+                self._click_job = None
             self.selected = day
             self._add_memo()
 
@@ -374,9 +434,8 @@ class CalendarWindow:
     def _add_memo(self):
         """고른 날짜에 메모 한 줄을 적는다 — 달력 앱처럼."""
         d = self.selected
-        text = simpledialog.askstring(
-            "메모", f"{d.month}월 {d.day}일 ({WEEK_KO[d.weekday()]}) 메모",
-            parent=self.root)
+        text = ask_text(self.root, "메모",
+                        f"{d.month}월 {d.day}일 ({WEEK_KO[d.weekday()]}) 메모")
         if not text or not text.strip():
             return
         st = State()

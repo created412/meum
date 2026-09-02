@@ -302,6 +302,13 @@ class Widget:
                                  fg=ACCENT, cursor="hand2")
         self.undo_btn.pack(side="left", padx=(10, 0))
         self.undo_btn.bind("<Button-1>", lambda e: self._undo())
+        grip = tk.Label(inner, text="⇲", font=self.f["btn"], bg=CARD_BG,
+                        fg=MUTED, cursor="size_nw_se")
+        grip.pack(side="right", padx=(6, 0))
+        grip.bind("<Button-1>", self._resize_start)
+        grip.bind("<B1-Motion>", self._resize_drag)
+        grip.bind("<ButtonRelease-1>", self._resize_end)
+
         self.status = tk.Label(inner, text="", font=self.f["small"], bg=CARD_BG, fg=FAINT)
         self.status.pack(side="right")
 
@@ -326,13 +333,47 @@ class Widget:
         """
         l, t, r, b = _work_area()
         w = int(self.cfg.get("widget_width", 380))
-        h = b - t
+        h = int(self.cfg.get("widget_height", 0) or 0)
+        if not (420 <= h <= (b - t)):
+            h = b - t                     # 저장값이 없거나 이상하면 화면 가득
+        w = max(320, min(w, r - l))
         x, y = self.cfg.get("widget_x"), self.cfg.get("widget_y")
 
         nx, ny, moved = clamp_to_screen(x, y, w, _screen_bounds(), (r - w, t))
+        # 아래로 밀려 발치(지금 확인·크기 손잡이)가 작업표시줄 밑에 숨는 일을
+        # 막는다 — 제목줄을 잡고 끌면 실제로 그렇게 됐다(실측).
+        if ny + h > b:
+            ny = max(t, b - h)
+            moved = True
         if moved and (x is not None or y is not None):
             self.cfg = config.update(widget_x=nx, widget_y=ny)
         self.root.geometry(f"{w}x{h}+{nx}+{ny}")
+
+    # ---- 크기 조절 (오른쪽 아래 ⇲ 손잡이) ----
+    def _resize_start(self, e):
+        self._rs = (e.x_root, e.y_root,
+                    self.root.winfo_width(), self.root.winfo_height())
+
+    def _resize_drag(self, e):
+        if not getattr(self, "_rs", None):
+            return
+        sx, sy, w0, h0 = self._rs
+        l, t, r, b = _work_area()
+        w = max(320, min(w0 + (e.x_root - sx), r - l))
+        h = max(420, min(h0 + (e.y_root - sy), b - t))
+        self.root.geometry(f"{w}x{h}")
+
+    def _resize_end(self, e):
+        if not getattr(self, "_rs", None):
+            return
+        self._rs = None
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        l, t, r, b = _work_area()
+        # 화면 가득이면 0 으로 저장 — 다음 컴퓨터·해상도에서도 가득 차게
+        self.cfg = config.update(widget_width=w,
+                                 widget_height=(0 if h >= (b - t) - 8 else h))
+        self.refresh()                    # 줄바꿈 폭을 새 넓이에 맞춘다
 
     def _set_view(self, key: str):
         # 패널은 자기가 바꾼 항목만 저장한다.
@@ -1379,13 +1420,33 @@ class Widget:
             tk.Label(dots, text="●", font=self.f["small"], bg=bg,
                      fg=("#ffffff" if d == self.day_filter else col)).pack(side="left")
 
+        # 한 번 클릭(날짜 거르기)은 화면을 다시 그려 이 칸을 없앤다.
+        # 그래서 '두 번 클릭'이 영영 성립하지 않았다(실측). 한 번 클릭을
+        # 잠깐 미뤄 두고, 그 사이 두 번째 클릭이 오면 물리고 메모를 연다.
         def pick(_=None, day=d):
-            self._pick_day(day)
+            if getattr(self, "_cal_click_job", None):
+                try:
+                    self.root.after_cancel(self._cal_click_job)
+                except Exception:
+                    pass
+
+            def later():
+                self._cal_click_job = None
+                self._pick_day(day)
+
+            self._cal_click_job = self.root.after(280, later)
 
         def memo(_=None, day=d):
+            if getattr(self, "_cal_click_job", None):
+                try:
+                    self.root.after_cancel(self._cal_click_job)
+                except Exception:
+                    pass
+                self._cal_click_job = None
             self._memo_popup(day)
 
-        for w in (cell, dots) + tuple(cell.winfo_children()):
+        for w in ((cell, dots) + tuple(cell.winfo_children())
+                  + tuple(dots.winfo_children())):
             try:
                 w.bind("<Button-1>", pick)
                 w.bind("<Double-Button-1>", memo)
@@ -1403,9 +1464,9 @@ class Widget:
 
     def _memo_popup(self, day):
         """달력 날짜를 두 번 누르면 그 날 메모를 적는다 — 달력 앱처럼."""
-        from tkinter import simpledialog
+        from .calendar_view import ask_text
         label = f"{day.month}월 {day.day}일 ({WEEKDAY[day.weekday()]})"
-        text = simpledialog.askstring(APP_NAME, f"{label} 메모", parent=self.root)
+        text = ask_text(self.root, APP_NAME, f"{label} 메모")
         if not text or not text.strip():
             return
         try:
