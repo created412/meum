@@ -43,6 +43,7 @@ OVERDUE = "#991b1b"
 MINE = "#0f766e"        # 내 할 일
 NOTICE = "#7c3aed"      # 알아둘 일
 SCHOOL = "#b45309"      # 학사일정
+MEMO = "#7c3aed"        # 날짜 메모 (달력에서 직접 적은 것)
 
 WEEK_KO = ["월", "화", "수", "목", "금", "토", "일"]
 
@@ -123,6 +124,8 @@ class CalendarWindow:
                   relief="flat", command=self._import_ics).pack(side="right", padx=6)
         tk.Button(head, text="+ 학사일정 추가", font=self.f["btn"], relief="flat",
                   command=self._add_event).pack(side="right", padx=6)
+        tk.Button(head, text="+ 메모", font=self.f["btn"], relief="flat",
+                  command=self._add_memo).pack(side="right", padx=6)
 
         body = tk.Frame(self.root, bg=BG)
         body.pack(fill="both", expand=True)
@@ -145,7 +148,7 @@ class CalendarWindow:
         legend = tk.Frame(self.root, bg=BG)
         legend.pack(fill="x", padx=14, pady=(0, 10))
         for color, label in ((MINE, "내 할 일"), (NOTICE, "알아둘 일"),
-                             (SCHOOL, "학사일정"), (OVERDUE, "기한 지남")):
+                             (SCHOOL, "학사일정"), (MEMO, "메모"), (OVERDUE, "기한 지남")):
             box = tk.Frame(legend, bg=BG)
             box.pack(side="left", padx=(0, 14))
             tk.Label(box, text="■", font=self.f["item"], bg=BG, fg=color).pack(side="left")
@@ -175,6 +178,8 @@ class CalendarWindow:
                                                        end.isoformat())]
             events = [dict(r) for r in st.school_events_between(start.isoformat(),
                                                                 end.isoformat())]
+            memos = [dict(r) for r in st.memos_between(start.isoformat(),
+                                                       end.isoformat())]
         finally:
             st.close()
 
@@ -206,6 +211,17 @@ class CalendarWindow:
                         "type": "school",
                     })
                 d += timedelta(days=1)
+
+        for mo in memos:
+            d = date.fromisoformat(mo["day"])
+            by_day.setdefault(d, []).append({
+                "kind": "memo",
+                "color": MEMO,
+                "time": "",
+                "title": mo["text"],
+                "raw": mo,
+                "type": "memo",
+            })
 
         for v in by_day.values():
             v.sort(key=lambda x: (x["time"] == "", x["time"]))
@@ -270,9 +286,14 @@ class CalendarWindow:
             self.selected = day
             self.refresh()
 
+        def memo(_=None, day=d):
+            self.selected = day
+            self._add_memo()
+
         for w in [cell, top] + list(cell.winfo_children()):
             try:
                 w.bind("<Button-1>", pick)
+                w.bind("<Double-Button-1>", memo)
             except Exception:
                 pass
 
@@ -303,7 +324,14 @@ class CalendarWindow:
                 .pack(side="left", fill="x", expand=True)
 
             raw = it["raw"]
-            if it["type"] == "school":
+            if it["type"] == "memo":
+                sub = "메모"
+                rm = tk.Label(card, text="삭제", font=self.f["item"], bg=BG,
+                              fg="#b91c1c", cursor="hand2")
+                rm.pack(anchor="e")
+                rm.bind("<Button-1>",
+                        lambda e, i=raw["memo_id"]: self._del_memo(i))
+            elif it["type"] == "school":
                 sub = f"학사일정 · {raw.get('category') or ''}"
                 rm = tk.Label(card, text="삭제", font=self.f["item"], bg=BG,
                               fg="#b91c1c", cursor="hand2")
@@ -341,6 +369,25 @@ class CalendarWindow:
         st.close()
         self.selected = s
         self.y, self.m = s.year, s.month
+        self.refresh()
+
+    def _add_memo(self):
+        """고른 날짜에 메모 한 줄을 적는다 — 달력 앱처럼."""
+        d = self.selected
+        text = simpledialog.askstring(
+            "메모", f"{d.month}월 {d.day}일 ({WEEK_KO[d.weekday()]}) 메모",
+            parent=self.root)
+        if not text or not text.strip():
+            return
+        st = State()
+        st.add_memo(d.isoformat(), text.strip())
+        st.close()
+        self.refresh()
+
+    def _del_memo(self, memo_id: int):
+        st = State()
+        st.delete_memo(memo_id)
+        st.close()
         self.refresh()
 
     def _del_event(self, event_id: int):

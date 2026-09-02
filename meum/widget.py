@@ -45,6 +45,7 @@ FAINT = "#94a3b8"
 LINE = "#dde3ec"
 
 OVERDUE = "#991b1b"      # 기한 지남
+MEMO_C = "#7c3aed"       # 날짜 메모 (달력에 직접 적은 것)
 TODAY_C = "#dc2626"      # 오늘
 TOMORROW = "#ea580c"     # 내일
 SOON = "#b45309"         # 이번 주
@@ -771,10 +772,11 @@ class Widget:
 
     def _signature(self):
         """지금 화면에 그려야 할 내용의 지문. 같으면 다시 그릴 필요가 없다."""
-        rows, last, events = self._load()
+        rows, last, events, memos = self._load()
         return (
             self.view, self.day_filter, self.cal_offset, date.today(),
             len(events), str(last),
+            len(memos), (memos[-1]["memo_id"] if memos else 0),
             tuple(sorted(
                 (r["task_id"], r.get("status"), r.get("due_at"),
                  r.get("short_title") or r.get("title"))
@@ -804,8 +806,12 @@ class Widget:
             events = [dict(r) for r in st.school_events_between(lo, hi)]
         except Exception:
             events = []
+        try:
+            memos = [dict(r) for r in st.memos_between(lo, hi)]
+        except Exception:
+            memos = []
         st.close()
-        self._cache = (rows, last, events)
+        self._cache = (rows, last, events, memos)
         self._cache_at = time.monotonic()
         return self._cache
 
@@ -835,7 +841,7 @@ class Widget:
 
         try:
             # 사용자가 직접 일으킨 갱신이면 반드시 DB 를 다시 읽는다
-            rows, last, events = self._load(force=not only_if_changed)
+            rows, last, events, memos = self._load(force=not only_if_changed)
         except Exception as e:
             tk.Label(self.body, text=f"목록을 읽지 못했습니다.\n{e}", font=self.f["item"],
                      bg=PAGE_BG, fg=MUTED, wraplength=300, justify="left").pack(pady=20)
@@ -885,7 +891,13 @@ class Widget:
             while dd <= s1:
                 marks.setdefault(dd, set()).add(SCHOOL_C)
                 dd += timedelta(days=1)
+        for mo in memos:
+            try:
+                marks.setdefault(date.fromisoformat(mo["day"]), set()).add(MEMO_C)
+            except Exception:
+                pass
         self._events = events
+        self._memos = memos
         self._paint_mini(marks)
 
         if self.day_filter:
@@ -893,6 +905,7 @@ class Widget:
             rows = [r for r in rows if (r["due_at"] or "")[:10] == want]
             self._events = [e for e in events
                             if e["start_date"] <= want <= (e["end_date"] or e["start_date"])]
+            self._memos = [m for m in memos if m["day"] == want]
 
         # ── 오늘 배너: 오늘 마감인 것만 맨 위에 빨갛게 ──
         self._today_banner(rows)
@@ -992,6 +1005,13 @@ class Widget:
             d = date.fromisoformat(r["due_at"][:10]) if r["due_at"] else None
             by_day.setdefault(d, []).append(r)
 
+        mem: Dict[date, List[dict]] = {}
+        for mo in getattr(self, "_memos", []):
+            try:
+                mem.setdefault(date.fromisoformat(mo["day"]), []).append(mo)
+            except Exception:
+                continue
+
         sch: Dict[date, List[dict]] = {}
         for e in getattr(self, "_events", []):
             try:
@@ -1004,13 +1024,17 @@ class Widget:
                 sch.setdefault(dd, []).append(e)
                 dd += timedelta(days=1)
 
-        dated = sorted(set([d for d in by_day if d is not None]) | set(sch.keys()))
+        dated = sorted(set([d for d in by_day if d is not None])
+                       | set(sch.keys())
+                       | {d for d in mem if d >= today})
 
         def draw_day(d):
             label, dday, color = _fmt_day(d, today)
             self._day_header(label, dday, color)
             for e in sch.get(d, []):
                 self._school_item(e)
+            for mo in mem.get(d, []):
+                self._memo_item(mo)
             for r in sorted(by_day.get(d, []), key=lambda x: (x["due_at"] or "")):
                 self._item(r, color, show_time=True)
 
@@ -1206,6 +1230,36 @@ class Widget:
         for w in hover_targets:
             w.bind("<Double-Button-1>", reopen)
 
+    def _memo_item(self, mo: dict):
+        """달력에서 직접 적은 메모 한 줄. 두 번 누르면 지울지 묻는다."""
+        card, content = self._card(MEMO_C, bg="#f5f3ff")
+        line = tk.Frame(content, bg="#f5f3ff")
+        line.pack(fill="x")
+        tk.Label(line, text="메모", font=self.f["pill"], bg=MEMO_C, fg="white",
+                 padx=5, pady=1).pack(side="left", padx=(0, 7))
+        tk.Label(line, text=(mo.get("text") or "")[:60], font=self.f["item"],
+                 bg="#f5f3ff", fg=FG, anchor="w", justify="left",
+                 wraplength=max(150, int(self.cfg.get("widget_width", 380)) - 150)).pack(side="left", fill="x", expand=True)
+
+        def ask_del(_=None):
+            from tkinter import messagebox
+            if messagebox.askyesno(APP_NAME, "이 메모를 지울까요?" + chr(10) * 2
+                                   + (mo.get("text") or "")[:80],
+                                   parent=self.root):
+                try:
+                    st = State()
+                    st.delete_memo(mo["memo_id"])
+                    st.close()
+                except Exception:
+                    pass
+                self.refresh()
+
+        for w in (card, content, line) + tuple(line.winfo_children()):
+            try:
+                w.bind("<Double-Button-1>", ask_del)
+            except Exception:
+                pass
+
     def _school_item(self, e: dict):
         card, content = self._card(SCHOOL_C, bg=SCHOOL_BG)
         line = tk.Frame(content, bg=SCHOOL_BG)
@@ -1317,7 +1371,7 @@ class Widget:
 
         dots = tk.Frame(cell, bg=bg)
         dots.pack()
-        order = [OVERDUE, TODAY_C, MINE_C, NOTICE_C, SCHOOL_C]
+        order = [OVERDUE, TODAY_C, MINE_C, NOTICE_C, SCHOOL_C, MEMO_C]
         shown = [x for x in order if x in colors][:3]
         if not shown:
             tk.Label(dots, text=" ", font=self.f["small"], bg=bg).pack()
@@ -1328,9 +1382,13 @@ class Widget:
         def pick(_=None, day=d):
             self._pick_day(day)
 
+        def memo(_=None, day=d):
+            self._memo_popup(day)
+
         for w in (cell, dots) + tuple(cell.winfo_children()):
             try:
                 w.bind("<Button-1>", pick)
+                w.bind("<Double-Button-1>", memo)
             except Exception:
                 pass
 
@@ -1341,6 +1399,23 @@ class Widget:
         else:
             # 지난 주는 한 주까지만 (지난 일은 '지남' 카드가 챙긴다)
             self.cal_offset = max(-1, getattr(self, "cal_offset", 0) + delta)
+        self.refresh()
+
+    def _memo_popup(self, day):
+        """달력 날짜를 두 번 누르면 그 날 메모를 적는다 — 달력 앱처럼."""
+        from tkinter import simpledialog
+        label = f"{day.month}월 {day.day}일 ({WEEKDAY[day.weekday()]})"
+        text = simpledialog.askstring(APP_NAME, f"{label} 메모", parent=self.root)
+        if not text or not text.strip():
+            return
+        try:
+            st = State()
+            st.add_memo(day.isoformat(), text.strip())
+            st.close()
+        except Exception as e:
+            self._gs_note = f"메모를 저장하지 못했습니다: {e}"
+            self._paint_status()
+            return
         self.refresh()
 
     def _pick_day(self, day):

@@ -79,6 +79,13 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS memos (
+    memo_id    INTEGER PRIMARY KEY AUTOINCREMENT,
+    day        TEXT NOT NULL,      -- YYYY-MM-DD
+    text       TEXT NOT NULL,
+    created_at TEXT
+);
 """
 
 
@@ -287,6 +294,23 @@ class State:
 
     def delete_school_event(self, event_id: int) -> None:
         self.con.execute("DELETE FROM school_events WHERE event_id=?", (event_id,))
+        self.con.commit()
+
+    # ---- 날짜 메모 (달력에서 직접 적는 것) ----
+    def add_memo(self, day: str, text: str) -> int:
+        cur = self.con.execute(
+            "INSERT INTO memos (day, text, created_at) VALUES (?,?,?)",
+            (day, text, datetime.now().isoformat(timespec="seconds")))
+        self.con.commit()
+        return int(cur.lastrowid)
+
+    def memos_between(self, start: str, end: str) -> list:
+        return list(self.con.execute(
+            "SELECT * FROM memos WHERE day BETWEEN ? AND ? "
+            "ORDER BY day, memo_id", (start, end)))
+
+    def delete_memo(self, memo_id: int) -> None:
+        self.con.execute("DELETE FROM memos WHERE memo_id=?", (memo_id,))
         self.con.commit()
 
     def school_event_exists(self, title: str, start_date: str) -> bool:
