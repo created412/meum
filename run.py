@@ -15,6 +15,7 @@
     메움.exe --set-report URL 진단 보고서를 받을 구글 폼 주소를 설정한다
     메움.exe --catchup       목록을 더 내려가며 지난 쪽지를 메운다
     메움.exe --uninstall     자동 실행 등록만 해제
+    메움.exe --demo          연수·시연 모드 (가짜 자료로 패널만, 실제 자료 안 건드림)
 """
 from __future__ import annotations
 
@@ -24,6 +25,16 @@ from pathlib import Path
 
 if not getattr(sys, "frozen", False):
     sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# 시연 모드는 자료 폴더부터 임시 폴더로 돌린다.
+# config 가 import 되는 순간 LOCALAPPDATA 를 읽어 굳히므로 반드시 그 전에.
+if "--demo" in sys.argv:
+    import os as _os
+    import shutil as _shutil
+    import tempfile as _tempfile
+    _demo_dir = Path(_tempfile.gettempdir()) / "메움시연"
+    _shutil.rmtree(_demo_dir, ignore_errors=True)   # 늘 오늘 날짜 기준으로 새로
+    _os.environ["LOCALAPPDATA"] = str(_demo_dir)
 
 from meum import config                      # noqa: E402
 
@@ -142,6 +153,8 @@ def main() -> int:
     p.add_argument("--trigger", default="manual",
                    choices=["manual", "daily", "logon", "extra", "watch"])
     p.add_argument("--setup", action="store_true", help="처음 설정 화면 열기")
+    p.add_argument("--demo", action="store_true",
+                   help="연수·시연 모드 — 가짜 자료로 패널만 띄운다")
     p.add_argument("--headless", action="store_true", help="확인 창 없이 실행")
     p.add_argument("--list-only", action="store_true", help="목록만 읽고 종료")
     p.add_argument("--status", action="store_true", help="실행 이력 확인")
@@ -161,6 +174,18 @@ def main() -> int:
                    metavar="N",
                    help="목록을 N화면만큼 더 내려가며 지난 쪽지를 메운다 (기본 4)")
     args = p.parse_args()
+
+    if args.demo:
+        # 메신저도 쪽지도 없는 연수장 컴퓨터에서, 채워진 패널을 바로 보여 준다.
+        from meum import demo, wizard
+        n_m, n_t = demo.seed()
+        config.update(watch_enabled=False,       # 메신저를 찾지 않는다
+                      times_confirmed=True, widget_always_on_top=True)
+        wizard.mark_configured()                 # 안내 화면 건너뛰기
+        out(f"시연 자료: 쪽지 {n_m}건 · 할 일 {n_t}건 (임시 폴더, 실제 자료 무관)")
+        from meum.widget import show
+        show()
+        return 0
 
     if args.calendar:
         from meum.calendar_view import show
