@@ -176,6 +176,8 @@ def main() -> int:
     args = p.parse_args()
 
     if args.demo:
+        import os as _os2
+        _os2.environ["MEUM_DEMO"] = "1"      # 패널이 '시연'임을 알게 한다
         # 메신저도 쪽지도 없는 연수장 컴퓨터에서, 채워진 패널을 바로 보여 준다.
         from meum import demo, wizard
         n_m, n_t = demo.seed()

@@ -140,6 +140,11 @@ def _fmt_day(d: date, today: date) -> Tuple[str, str, str]:
 
 def already_running() -> bool:
     """같은 제목의 패널이 이미 떠 있는지."""
+    import os
+    if os.environ.get("MEUM_DEMO"):
+        # 시연은 진짜 패널이 떠 있어도 함께 뜬다 — 발표자 노트북에서
+        # 실제 사용판을 쓰면서 시연을 못 여는 일이 실제로 있었다.
+        return False
     try:
         import win32gui
         found = []
@@ -159,7 +164,9 @@ class Widget:
         self.cfg = config.load()
         self.view = self.cfg.get("widget_view", "mine")   # mine | date | note
         self.root = tk.Tk()
-        self.root.title(WINDOW_TITLE)
+        import os as _os
+        self.root.title(WINDOW_TITLE + (" · 시연" if _os.environ.get("MEUM_DEMO")
+                                        else ""))
         self.root.configure(bg=PAGE_BG)
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", bool(self.cfg.get("widget_always_on_top", True)))
