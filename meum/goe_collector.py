@@ -219,6 +219,10 @@ def guess_subject(body: str) -> str:
     그럴 때 다음 줄을 붙이지 않으면 제목이 '[안내]' 뿐인 쓸모없는 값이 된다.
     """
     lines = [l.strip() for l in body.split("\n") if l.strip()]
+    # 전달된 쪽지는 '---- 원본메시지 ----', '발 신 자 :', '발신시간 :' 로
+    # 시작한다. 그 줄들을 제목으로 쓰면 제목이 구분선이 된다(실측).
+    lines = [l for l in lines
+             if not re.match(r"^(-{3,}|발\s*신\s*자\s*:|발신\s*시간\s*:)", l)]
     if not lines:
         return re.sub(r"\s+", " ", body)[:60]
     first = lines[0]
@@ -455,13 +459,22 @@ class GoeCollector:
     def collect(self, known_keys: Set[str], max_rows: int = MAX_ROWS,
                 progress: Optional[Callable[[int, str], None]] = None,
                 should_stop: Optional[Callable[[], bool]] = None,
-                deep_pages: int = 0) -> List[GoeNote]:
+                deep_pages: int = 0,
+                since: Optional[datetime] = None,
+                known_stop: int = 6) -> List[GoeNote]:
         """
-        위에서부터 훑다가 이미 본 쪽지를 **두 번 잇달아** 만나면 멈춘다.
+        위에서부터 훑다가 둘 중 하나가 되면 멈춘다.
 
-        한 번만에 멈추면 구멍이 생긴다. 수집이 중간에 끊긴 다음 실행에서는
-        맨 윗줄이 '이미 본 쪽지'라 곧바로 멈춰 버려, 그 아래에서 못 읽은
-        쪽지들이 영영 수집되지 않기 때문이다. 한 줄 더 보는 값으로 막는다.
+          · 이미 본 쪽지를 known_stop 번(기본 6) 잇달아 만났을 때
+
+        since 보다 오래된 쪽지(발신시간 기준)는 새로 들이지 않는다 — 멈추지는
+        않는다. 전달 쪽지의 발신시간은 원본 시각이라 멈춤 판단에 쓸 수 없다.
+
+        예전에는 이미 본 쪽지 **두 개**만 이어져도 멈췄다. 그런데 GOE 목록은
+        엄격한 시간순이 아니다 — 답장이 오면 대화가 위로 올라오고, 짧은
+        답장('감사합니다')은 본문이 같아 옛 쪽지와 한 열쇠로 겹친다. 그래서
+        아는 쪽지 두 개 아래에 숨은 새 쪽지를 놓쳤다(실측: 9/10 쪽지 누락,
+        9월 로그에 이 이유로 멈춘 것 152회). 한도를 여섯으로 늘린다.
 
         한 화면(여덟 줄)을 다 훑고도 새 쪽지가 이어지면 **목록을 내려서**
         계속 본다. 쪽지가 한꺼번에 몰려 온 날 아래로 밀린 것들을 놓치지
@@ -508,6 +521,8 @@ class GoeCollector:
                 seen_now.add(note.key)
                 preopened += 1
                 if note.key not in known_keys:
+                    if since and note.received_at and note.received_at < since:
+                        continue      # 오래된 쪽지 창이 열려 있을 뿐이다
                     out.append(note)
                     self.log(f"  + GOE(열려 있던 쪽지): {note.subject[:30]}")
             except Exception:
@@ -571,10 +586,19 @@ class GoeCollector:
                         # 화면 기준이라 목록 전체의 자리와 다르다.
                         self.last_order.append(note.key)
 
+                    # 날짜로는 **멈추지 않는다**. 발신시간은 전달 쪽지에만 있고
+                    # 그것은 원본이 쓰인 날이지 도착한 날이 아니다 — 오늘 전달된
+                    # 옛 공문이 목록 위에 여럿 있어 5번째 줄에서 멈춘 일이 실제로
+                    # 있었다. 날짜는 '두 달 넘은 쪽지는 들이지 않는다' 는 안전망
+                    # (since)으로만 쓴다. 설치 전 잡담이 쏟아지는 것만 막는다.
+                    if (since and note.received_at and note.received_at < since
+                            and note.key not in known_keys):
+                        continue
+
                     if note.key in known_keys:
                         known_streak += 1
-                        if known_streak >= 2 and not deep_pages:
-                            self.log(f"  · 이미 본 쪽지가 이어져 중단 "
+                        if known_streak >= known_stop and not deep_pages:
+                            self.log(f"  · 이미 본 쪽지가 {known_stop}개 이어져 중단 "
                                      f"({seen_rows}번째)")
                             stop = True
                             break

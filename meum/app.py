@@ -374,10 +374,16 @@ class Runner:
             max_rows = int(self.cfg.get("goe_max_rows", 25))
             if self.deep_pages:
                 max_rows = max(max_rows, self.deep_pages * 10)
+            # 두 달보다 오래된 쪽지(발신시간 기준)는 새로 들이지 않는다.
+            # 설치 전 잡담이 한꺼번에 할 일로 쏟아지는 것만 막는 안전망이다.
+            _since = datetime.now() - timedelta(
+                days=int(self.cfg.get("goe_max_age_days", 60)))
             notes = col.collect(known_keys=known,
                                 max_rows=max_rows,
                                 should_stop=self.should_stop,
-                                deep_pages=self.deep_pages)
+                                deep_pages=self.deep_pages,
+                                since=_since,
+                                known_stop=int(self.cfg.get("goe_known_stop", 6)))
             # 훑으면서 본 줄 순서를 남긴다. GOE 목록은 읽을 수 없어서,
             # 나중에 그 쪽지를 다시 띄울 때 어느 줄을 눌러야 하는지
             # 알 수 있는 유일한 단서다 (reopen.py).

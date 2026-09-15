@@ -94,12 +94,43 @@ class ExtractedTask:
 # --------------------------------------------------------------------------
 # 전처리
 # --------------------------------------------------------------------------
+_QUOTE_HEADER_LINE = re.compile(
+    r"^\s*(-{3,}.*-{3,}|발\s*신\s*자\s*:.*|발신\s*시간\s*:.*|"
+    r"Sender\s*:.*|Sent\s*:.*|수\s*신\s*자\s*:.*|제\s*목\s*:.*)\s*$",
+    re.IGNORECASE)
+
+
 def strip_quotes(body: str) -> str:
-    """인용부(---- Original Message ----) 이후를 잘라 최신 발화만 남긴다."""
+    """
+    인용부(---- 원본메시지 ----) 이후를 잘라 최신 발화만 남긴다.
+
+    단, 인용부 **앞이 비어 있으면** 그 인용 안이 곧 본문이다. 공문을 그대로
+    전달한 쪽지는 첫 줄부터 '---- 원본메시지 ----' 로 시작하는데, 예전에는
+    이것을 '지난 대화'로 보고 통째로 잘라 빈 본문을 남겼다. 그래서 전달받은
+    공문의 마감이 하나도 뽑히지 않았다(실측: 수학올림픽 9/16 안내 등).
+    """
     if not body:
         return ""
     m = QUOTE_RE.search(body)
-    return body[:m.start()].strip() if m else body.strip()
+    if not m:
+        return body.strip()
+    head = body[:m.start()].strip()
+    if len(head) >= 5:
+        return head
+    # 앞이 비었다 → 인용 안의 머리글 줄(구분선·발신자·발신시간)만 걷어 낸다
+    rest = body[m.start():]
+    lines = rest.split(chr(10))
+    kept = []
+    started = False
+    for line in lines:
+        if not started:
+            if not line.strip() or _QUOTE_HEADER_LINE.match(line):
+                continue          # 첫 인용 머리글 묶음은 건너뛴다
+            started = True
+        elif QUOTE_RE.search(line):
+            break                 # 그 안의 또 다른 인용(더 옛 대화)에서 멈춘다
+        kept.append(line)
+    return chr(10).join(kept).strip()
 
 
 def normalize_thread_key(subject: str, sender: str) -> str:
