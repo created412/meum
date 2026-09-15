@@ -280,6 +280,16 @@ class Wizard:
             "수업(발표) 중일 때는 건드리지 않고 기다립니다.\n"
             "정리 도중 자리에 돌아오시면 그 자리에서 멈추고 다음 기회로 미룹니다.")
 
+        self.auto_var = tk.BooleanVar(value=bool(self.cfg.get("autostart", False)))
+        tk.Checkbutton(self.body, text="컴퓨터를 켤 때 메움을 자동으로 실행",
+                       variable=self.auto_var, font=self.f["body"], bg=BG, fg=FG,
+                       activebackground=BG, anchor="w").pack(anchor="w", pady=(10, 0))
+        tk.Label(self.body,
+                 text="체크하지 않으면 메움을 직접 켜셨을 때만 동작합니다.\n"
+                      "(보충 점검 시각도 자동 실행을 켰을 때만 쓰입니다)",
+                 font=self.f["small"], bg=BG, fg=MUTED, justify="left")\
+            .pack(anchor="w", padx=(24, 0))
+
         status = tk.Label(self.body, text="", font=self.f["body"], bg=BG, fg=MUTED,
                           anchor="w", justify="left", wraplength=590)
         status.pack(anchor="w", pady=(6, 0))
@@ -314,7 +324,7 @@ class Wizard:
                                      watch_idle_gap_min=gap)
             status.configure(text="등록 중…", fg=MUTED)
             self.root.update()
-            ok, msg = register_task(t1, t2)
+            ok, msg = apply_autostart(self.auto_var.get(), t1, t2)
             if ok:
                 status.configure(text=msg, fg="#166534")
                 self.root.after(1200, self.next_step)
@@ -328,7 +338,7 @@ class Wizard:
                                "(나중에 --setup 으로 다시 시도할 수 있습니다)",
                     fg=DANGER)
 
-        self._primary("이대로 등록하고 다음", save_and_next)
+        self._primary("다음", save_and_next)
         self._secondary("이전", self.prev_step, side="left")
 
     # ---------------- 3단계: 완료 ----------------
@@ -338,7 +348,12 @@ class Wizard:
         t2 = self.cfg.get("run_time_lunch", "12:40")
 
         self._p("자동 정리 : 쪽지가 오면 수시로, 창 없이 조용히")
-        self._p(f"보충 점검 : 매일 {t1} · {t2} (컴퓨터가 꺼져 있었을 때를 위해)")
+        if self.cfg.get("autostart", False):
+            self._p("자동 실행 : 켬 — 컴퓨터를 켜면 패널이 저절로 뜹니다")
+            self._p(f"보충 점검 : 매일 {t1} · {t2} (컴퓨터가 꺼져 있었을 때를 위해)")
+        else:
+            self._p("자동 실행 : 끔 — 메움을 직접 켜셨을 때만 동작합니다")
+            self._p("켜는 곳   : 바탕화면 또는 시작 메뉴의 '메움'")
         self._p("일정 확인 : 바탕화면 오른쪽 할 일 패널과 안에 든 달력")
         self._p("")
         self._p("이렇게 돌아갑니다.", font="bold")
@@ -546,11 +561,11 @@ def register_widget_autostart() -> bool:
     try:
         import winreg
         if getattr(sys, "frozen", False):
-            cmd = f'"{sys.executable}" --widget'
+            cmd = f'"{sys.executable}" --widget --autostart'
         else:
             pyw = Path(sys.executable).with_name("pythonw.exe")
             py = str(pyw if pyw.exists() else sys.executable)
-            cmd = f'"{py}" "{app_root() / "run.py"}" --widget'
+            cmd = f'"{py}" "{app_root() / "run.py"}" --widget --autostart'
         key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                              r"Software\Microsoft\Windows\CurrentVersion\Run",
                              0, winreg.KEY_SET_VALUE)
@@ -612,11 +627,11 @@ def register_startup_shortcut() -> bool:
         lnk = sh.CreateShortcut(str(startup / f"{APP_NAME}.lnk"))
         if getattr(sys, "frozen", False):
             lnk.TargetPath = sys.executable
-            lnk.Arguments = "--widget"
+            lnk.Arguments = "--widget --autostart"
         else:
             pyw = Path(sys.executable).with_name("pythonw.exe")
             lnk.TargetPath = str(pyw if pyw.exists() else sys.executable)
-            lnk.Arguments = f'"{app_root() / "run.py"}" --widget'
+            lnk.Arguments = f'"{app_root() / "run.py"}" --widget --autostart'
         lnk.WorkingDirectory = str(app_root())
         lnk.Description = f"{APP_NAME} — 놓친 업무를 메워드립니다"
         lnk.Save()
@@ -678,6 +693,57 @@ def unregister_task() -> None:
         subprocess.run(["schtasks", "/Delete", "/TN", tn, "/F"],
                        capture_output=True, text=True)
     unregister_widget_autostart()
+
+
+def disable_autostart() -> None:
+    """
+    메움이 **스스로** 켜지는 길을 모두 걷어 낸다.
+
+      · 작업 스케줄러  DailyBrief(하루 두 번) · PanelGuard(10분마다 되살림)
+      · 레지스트리 Run · 시작프로그램 폴더 바로가기
+
+    시작 메뉴와 바탕화면 바로가기는 **남긴다** — 그건 선생님이 직접 켜는
+    길이다. (unregister_widget_autostart 는 시작 메뉴까지 지워서 쓰지 않는다)
+    """
+    for tn in ("메움\\DailyBrief", "메움\\LogonCatchUp", "메움\\PanelGuard"):
+        try:
+            # 결과 글자는 읽지 않는다 — 콘솔 코드페이지가 달라 해석 오류가 났다
+            subprocess.run(["schtasks", "/Delete", "/TN", tn, "/F"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=30)
+        except Exception:
+            pass
+    try:
+        import winreg
+        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                             r"Software\Microsoft\Windows\CurrentVersion\Run",
+                             0, winreg.KEY_SET_VALUE)
+        try:
+            winreg.DeleteValue(key, "메움")
+        finally:
+            winreg.CloseKey(key)
+    except Exception:
+        pass
+    unregister_startup_shortcut()
+
+
+def apply_autostart(enabled: bool, run_time: str = "", lunch_time: str = "") -> tuple:
+    """
+    '컴퓨터를 켤 때 자동 실행' 을 켜거나 끈다. (성공여부, 안내 문구)
+
+    기본은 **끔**이다. 스스로 켜지는 프로그램을 싫어하시는 분이 많았다
+    ('껐는데 또 뜬다'). 고르신 분만 로그인 자동 실행·되살림·보충 점검을 건다.
+    """
+    cfg = config.update(autostart=bool(enabled), autostart_cleaned=True)
+    if enabled:
+        t1 = run_time or cfg.get("run_time", "08:40")
+        t2 = lunch_time or cfg.get("run_time_lunch", "12:40")
+        return register_task(t1, t2)
+    disable_autostart()
+    create_desktop_shortcuts()          # 직접 켜는 길은 늘 남겨 둔다
+    return True, ("자동 실행은 꺼 두었습니다.\n"
+                  "쓰실 때 바탕화면이나 시작 메뉴의 '메움' 을 눌러 주세요.\n"
+                  "(켜져 있는 동안에는 새 쪽지를 계속 정리합니다)")
 
 
 def run_wizard():

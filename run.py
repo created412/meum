@@ -153,6 +153,8 @@ def main() -> int:
     p.add_argument("--trigger", default="manual",
                    choices=["manual", "daily", "logon", "extra", "watch"])
     p.add_argument("--setup", action="store_true", help="처음 설정 화면 열기")
+    p.add_argument("--autostart", action="store_true",
+                   help=argparse.SUPPRESS)   # 로그인 자동 실행이 붙이는 표시
     p.add_argument("--demo", action="store_true",
                    help="연수·시연 모드 — 가짜 자료로 패널만 띄운다")
     p.add_argument("--headless", action="store_true", help="확인 창 없이 실행")
@@ -174,6 +176,23 @@ def main() -> int:
                    metavar="N",
                    help="목록을 N화면만큼 더 내려가며 지난 쪽지를 메운다 (기본 4)")
     args = p.parse_args()
+
+    # 자동 실행은 **고르신 분만**. 끈 상태에서 스스로 불린 실행은 아무것도
+    # 띄우지 않고, 남아 있는 자동 실행 등록을 걷어 낸 뒤 끝낸다.
+    # (예전 판이 걸어 둔 것들 — 10분마다 되살리기·로그인 실행 — 이 새 판에서도
+    #  계속 패널을 띄우는 일을 막는다. 시연 모드는 실제 설정이 아니므로 제외)
+    if not args.demo:
+        _cfg0 = config.load()
+        _auto = bool(_cfg0.get("autostart", False))
+        _self_started = (args.autostart or args.ensure_panel
+                         or args.trigger in ("daily", "logon"))
+        if not _auto and (_self_started or not _cfg0.get("autostart_cleaned")):
+            from meum import wizard as _wz
+            _wz.disable_autostart()
+            config.update(autostart_cleaned=True)
+            if _self_started:
+                out("자동 실행이 꺼져 있어 종료합니다.")
+                return 0
 
     if args.demo:
         import os as _os2

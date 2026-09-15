@@ -225,7 +225,8 @@ class Widget:
         self.date_lbl.pack(side="left", padx=(8, 0))
 
         btns = tk.Frame(row1, bg=HEAD_BG)
-        btns.pack(side="right")
+        # 날짜 글자보다 먼저 자리를 잡아, 좁게 줄여도 단추가 잘리지 않게 한다
+        btns.pack(side="right", before=self.brand_lbl)
         for txt, cmd, tip in (("✕", self._close_panel, None),
                               ("―", self._minimize_panel, None),
                               ("📌", self._toggle_pin, None),
@@ -296,7 +297,10 @@ class Widget:
 
         # ── 발치 ──
         foot = tk.Frame(self.root, bg=CARD_BG)
-        foot.pack(fill="x", side="bottom")
+        # 반드시 목록(wrap)보다 **먼저** 자리를 잡는다. Tk 는 창을 줄일 때
+        # 나중에 놓인 것부터 잘라 내서, 패널을 작게 줄이면 '지금 확인' 과
+        # '켤 때 자동 실행' 이 통째로 사라졌다(실측: 높이 722 에서 안 보임).
+        foot.pack(fill="x", side="bottom", before=wrap)
         tk.Frame(foot, bg=LINE, height=1).pack(fill="x")
         inner = tk.Frame(foot, bg=CARD_BG)
         inner.pack(fill="x", padx=10, pady=8)
@@ -321,8 +325,20 @@ class Widget:
         self.status.pack(side="right")
 
         # 이 프로그램이 왜 있는지 — 늘 보이는 자리에 한 줄
-        tk.Label(foot, text=f"{APP_NAME} · {APP_TAGLINE_SHORT}",
-                 font=self.f["small"], bg=CARD_BG, fg=FAINT)            .pack(anchor="w", padx=12, pady=(0, 7))
+        tail = tk.Frame(foot, bg=CARD_BG)
+        tail.pack(fill="x", padx=(8, 12), pady=(0, 6))
+
+        # 컴퓨터를 켤 때 자동 실행 — 고르신 분만 (기본 끔)
+        # 소개 문구보다 먼저 자리를 잡는다. 좁게 줄이면 체크 네모가 잘려
+        # 무엇을 누르는 건지 안 보였다. 잘려도 되는 것은 소개 문구 쪽이다.
+        self.auto_var = tk.BooleanVar(value=bool(self.cfg.get("autostart", False)))
+        tk.Checkbutton(tail, text="켤 때 자동 실행", variable=self.auto_var,
+                       font=self.f["small"], bg=CARD_BG, fg=MUTED,
+                       activebackground=CARD_BG,
+                       command=self._toggle_autostart).pack(side="left")
+        tk.Label(tail, text=f"{APP_NAME} · {APP_TAGLINE_SHORT}",
+                 font=self.f["small"], bg=CARD_BG, fg=FAINT,
+                 anchor="e").pack(side="right", fill="x", expand=True)
         self._last_done = None
         self._gs_note = ""
         self._stamp = ""
@@ -565,6 +581,35 @@ class Widget:
                 self.root.attributes("-topmost", True)
         except Exception:
             pass
+
+    def _toggle_autostart(self):
+        """발치의 '켤 때 자동 실행' 을 바꾼다. 등록에 몇 초 걸려 따로 돌린다."""
+        want = bool(self.auto_var.get())
+        self._gs_note = "자동 실행을 " + ("켜는 중…" if want else "끄는 중…")
+        self._paint_status()
+
+        def work():
+            try:
+                from .wizard import apply_autostart
+                ok, msg = apply_autostart(want)
+            except Exception as e:
+                ok, msg = False, f"바꾸지 못했습니다: {e}"
+            self.cfg = config.load()
+            note = (("자동 실행 켬 — 컴퓨터를 켜면 패널이 뜹니다" if want
+                     else "자동 실행 끔 — 직접 켜셨을 때만 동작합니다")
+                    if ok else msg.split(chr(10))[0])
+
+            def done():
+                if not ok:
+                    self.auto_var.set(not want)
+                self._gs_note = note
+                self._paint_status()
+            try:
+                self.root.after(0, done)
+            except Exception:
+                pass
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _toggle_pin(self):
         v = not bool(self.cfg.get("widget_always_on_top", True))
